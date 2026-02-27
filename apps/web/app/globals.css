@@ -1,0 +1,235 @@
+:root {
+  --bg: #0a0a0a;
+  --fg: #ededed;
+  --muted: #888;
+  --border: #222;
+  --accent: #3b82f6;
+  --card-bg: #111;
+  --sidebar-bg: #0d0d0d;
+  --hover-bg: #1a1a1a;
+  --active-bg: #1e293b;
+  --skeleton-bg: #1a1a1a;
+  --skeleton-shine: #222;
+  --radius: 8px;
+  --font-mono: "SF Mono", "Fira Code", "Fira Mono", Menlo, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Clapp Shell */
+.clapp-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.clapp-app {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Headings */
+.clapp-heading {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+h1.clapp-heading { font-size: 1.5rem; }
+h2.clapp-heading { font-size: 1.25rem; }
+h3.clapp-heading { font-size: 1rem; }
+
+/* Buttons */
+.clapp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.clapp-btn:hover {
+  background: var(--hover-bg);
+}
+
+.clapp-btn-ghost {
+  border-color: transparent;
+}
+
+.clapp-btn-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.clapp-btn-md {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+}
+
+/* List */
+.clapp-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.clapp-list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--fg);
+  transition: background 0.15s;
+}
+
+.clapp-list-item:hover {
+  background: var(--hover-bg);
+}
+
+.clapp-list-item.active {
+  background: var(--active-bg);
+  color: var(--accent);
+}
+
+/* Icon */
+.clapp-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/* Skeleton */
+.clapp-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.clapp-skeleton-line {
+  height: 1rem;
+  background: linear-gradient(90deg, var(--skeleton-bg) 25%, var(--skeleton-shine) 50%, var(--skeleton-bg) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+.clapp-skeleton-line:nth-child(odd) { width: 80%; }
+.clapp-skeleton-line:nth-child(even) { width: 60%; }
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Card */
+.clapp-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card-bg);
+  overflow: hidden;
+}
+
+.clapp-card-header {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.clapp-card-body {
+  padding: 1rem;
+}
+
+/* Markdown */
+.clapp-markdown {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  max-width: 72ch;
+}
+
+.clapp-markdown h1 { font-size: 1.5rem; font-weight: 700; margin: 1.5rem 0 0.75rem; }
+.clapp-markdown h2 { font-size: 1.25rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+.clapp-markdown h3 { font-size: 1.1rem; font-weight: 600; margin: 1rem 0 0.5rem; }
+.clapp-markdown p { margin: 0.75rem 0; }
+.clapp-markdown ul, .clapp-markdown ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+.clapp-markdown li { margin: 0.25rem 0; }
+.clapp-markdown code {
+  font-family: var(--font-mono);
+  background: var(--hover-bg);
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+.clapp-markdown pre {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+.clapp-markdown pre code {
+  background: none;
+  padding: 0;
+}
+.clapp-markdown blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 1rem;
+  color: var(--muted);
+  margin: 0.75rem 0;
+}
+.clapp-markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5rem 0;
+}
+.clapp-markdown a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.clapp-markdown a:hover {
+  text-decoration: underline;
+}
+
+/* Empty state */
+.clapp-empty {
+  color: var(--muted);
+  font-size: 0.875rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+/* Error */
+.clapp-error {
+  color: #ef4444;
+  font-size: 0.875rem;
+  padding: 0.5rem;
+}
+
+/* Module containers */
+.clapp-module {
+  height: 100%;
+  overflow-y: auto;
+}

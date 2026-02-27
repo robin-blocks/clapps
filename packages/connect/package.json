@@ -1,0 +1,16 @@
+{
+  "name": "@clapps/connect",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "clapps-connect": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@clapps/core": "workspace:*",
+    "chokidar": "^4.0.3"
+  }
+}

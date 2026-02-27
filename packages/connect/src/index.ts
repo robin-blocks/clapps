@@ -1,0 +1,73 @@
+#!/usr/bin/env node
+
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { mkdirSync } from "node:fs";
+import { AgentClient } from "./agent-client.js";
+import { IntentPoller } from "./intent-poller.js";
+import { StateWatcher } from "./state-watcher.js";
+
+function parseArgs(args: string[]) {
+  const opts: Record<string, string> = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith("--") && i + 1 < args.length) {
+      opts[args[i].slice(2)] = args[i + 1];
+      i++;
+    }
+  }
+  return opts;
+}
+
+async function main() {
+  const opts = parseArgs(process.argv.slice(2));
+  const relayUrl = opts.relay ?? "https://clapps.clawlab.app";
+  const token = opts.token;
+  const agentUrl = opts.agent ?? "http://localhost:18789";
+  const stateDir =
+    opts["state-dir"] ??
+    resolve(homedir(), ".openclaw", "workspace", "ui", "state");
+
+  if (!token) {
+    console.error("Usage: clapps-connect --token YOUR_TOKEN [--relay URL] [--agent URL]");
+    process.exit(1);
+  }
+
+  // Ensure state directory exists
+  mkdirSync(stateDir, { recursive: true });
+
+  const agentClient = new AgentClient({ agentUrl });
+
+  const intentPoller = new IntentPoller({
+    relayUrl,
+    token,
+    agentClient,
+    onError: (err) => console.error("[intent-poller]", err.message),
+  });
+
+  const stateWatcher = new StateWatcher({
+    stateDir,
+    relayUrl,
+    token,
+    onError: (err) => console.error("[state-watcher]", err.message),
+  });
+
+  console.log(`🔗 Connecting to relay: ${relayUrl}`);
+  console.log(`🤖 Agent at: ${agentUrl}`);
+  console.log(`📁 Watching state: ${stateDir}`);
+
+  intentPoller.start();
+  stateWatcher.start();
+
+  // Graceful shutdown
+  process.on("SIGINT", async () => {
+    console.log("\nShutting down...");
+    intentPoller.stop();
+    await stateWatcher.stop();
+    process.exit(0);
+  });
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

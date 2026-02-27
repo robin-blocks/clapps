@@ -1,0 +1,20 @@
+{
+  "name": "clapps",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @clapps/web dev",
+    "test": "vitest",
+    "lint": "tsc --noEmit",
+    "clean": "pnpm -r clean"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  },
+  "packageManager": "pnpm@9.5.0",
+  "engines": {
+    "node": ">=22"
+  }
+}
