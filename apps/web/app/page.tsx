@@ -6,6 +6,7 @@ import { HomeScreen } from "./HomeScreen";
 
 const STORAGE_KEY = "clapps:agentId";
 const SESSION_STORAGE_KEY = "clapps:session";
+const LINK_STORAGE_KEY = "clapps:link";
 
 export default function Home() {
   const [agentId, setAgentId] = useState<string | null>(null);
@@ -18,12 +19,38 @@ export default function Home() {
     const url = new URL(window.location.href);
     const fromUrl = url.searchParams.get("agentId");
     const sessionFromUrl = url.searchParams.get("session");
+    const linkFromUrl = url.searchParams.get("link");
 
+    // Direct session token from URL
     if (sessionFromUrl) {
       localStorage.setItem(SESSION_STORAGE_KEY, sessionFromUrl);
       setSessionToken(sessionFromUrl);
-      url.searchParams.delete("session");
-    } else {
+    }
+
+    // Link token from URL — store and exchange for session
+    if (linkFromUrl) {
+      localStorage.setItem(LINK_STORAGE_KEY, linkFromUrl);
+      const storedSession = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (!storedSession && !sessionFromUrl) {
+        // Exchange link for session
+        fetch("/api/session/from-link", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ linkToken: linkFromUrl }),
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data?.sessionToken) {
+              localStorage.setItem(SESSION_STORAGE_KEY, data.sessionToken);
+              setSessionToken(data.sessionToken);
+            }
+          })
+          .catch(() => {});
+      }
+    }
+
+    // Restore session from storage
+    if (!sessionFromUrl) {
       const storedSession = localStorage.getItem(SESSION_STORAGE_KEY);
       if (storedSession) setSessionToken(storedSession);
     }
@@ -32,16 +59,13 @@ export default function Home() {
       const val = fromUrl.trim().toLowerCase();
       localStorage.setItem(STORAGE_KEY, val);
       setAgentId(val);
-      url.searchParams.delete("agentId");
-      window.history.replaceState({}, "", url.pathname);
     } else {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) setAgentId(stored);
-      // Clean URL if session param was present
-      if (sessionFromUrl) {
-        window.history.replaceState({}, "", url.pathname);
-      }
     }
+
+    // Clean URL
+    window.history.replaceState({}, "", url.pathname);
     setLoaded(true);
   }, []);
 
@@ -63,6 +87,7 @@ export default function Home() {
   function clearAgentId() {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(SESSION_STORAGE_KEY);
+    localStorage.removeItem(LINK_STORAGE_KEY);
     setAgentId(null);
     setSessionToken(undefined);
     setActiveApp(null);

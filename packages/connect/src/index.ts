@@ -66,9 +66,9 @@ async function main() {
   console.log(`📁 Watching state: ${stateDir}`);
   console.log(`📄 Watching views: ${viewsDir}`);
 
-  // Create a browser session
+  // Create/reuse a stable link token for browser access
   try {
-    const sessionRes = await fetch(`${relayUrl}/api/agent/sessions`, {
+    const linkRes = await fetch(`${relayUrl}/api/agent/links`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -77,19 +77,17 @@ async function main() {
       body: JSON.stringify({ agentId }),
     });
 
-    if (sessionRes.ok) {
-      const session = (await sessionRes.json()) as {
-        sessionToken: string;
-        expiresAt: string;
-      };
-      const browserUrl = `${relayUrl}/?agentId=${encodeURIComponent(agentId)}&session=${encodeURIComponent(session.sessionToken)}`;
-      console.log(`\n🌐 Open in browser: ${browserUrl}\n`);
+    if (linkRes.ok) {
+      const link = (await linkRes.json()) as { linkToken: string };
+      const browserUrl = `${relayUrl}/?agentId=${encodeURIComponent(agentId)}&link=${encodeURIComponent(link.linkToken)}`;
+      console.log(`\n🌐 Open in browser: ${browserUrl}`);
+      console.log(`   (stable link — reuse across restarts)\n`);
     } else {
-      console.warn(`⚠️  Failed to create session: ${sessionRes.status}`);
+      console.warn(`⚠️  Failed to create link: ${linkRes.status}`);
     }
   } catch (err) {
     console.warn(
-      `⚠️  Could not create session: ${err instanceof Error ? err.message : err}`,
+      `⚠️  Could not create link: ${err instanceof Error ? err.message : err}`,
     );
   }
 

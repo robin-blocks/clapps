@@ -6,10 +6,10 @@ export default async function ClappPage({
   searchParams,
 }: {
   params: Promise<{ clappId: string }>;
-  searchParams: Promise<{ agent?: string; session?: string }>;
+  searchParams: Promise<{ agent?: string; session?: string; link?: string }>;
 }) {
   const { clappId } = await params;
-  const { agent, session } = await searchParams;
+  const { agent, session, link } = await searchParams;
 
   if (!agent) {
     redirect("/");
@@ -17,6 +17,7 @@ export default async function ClappPage({
 
   const homeQuery = new URLSearchParams({ agentId: agent });
   if (session) homeQuery.set("session", session);
+  if (link) homeQuery.set("link", link);
 
   return (
     <ClappRenderer

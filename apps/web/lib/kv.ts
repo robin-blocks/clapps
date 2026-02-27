@@ -156,6 +156,28 @@ export async function validateSession(token: string): Promise<string | null> {
   return record.agentId;
 }
 
+// --- Link tokens (stable, long-lived browser access) ---
+
+const LINK_KEY = (agentId: string) => `link:${agentId}`;
+const LINK_TOKEN_KEY = (token: string) => `link-token:${token}`;
+
+/** Create or reuse a stable link token for an agent (no expiry) */
+export async function createOrGetLink(agentId: string): Promise<string> {
+  const existing = await kv.get<string>(LINK_KEY(agentId));
+  if (existing) return existing;
+
+  const token = crypto.randomUUID();
+  await kv.set(LINK_KEY(agentId), token);
+  await kv.set(LINK_TOKEN_KEY(token), agentId);
+  return token;
+}
+
+/** Validate a link token. Returns the agentId if valid, null otherwise. */
+export async function validateLink(token: string): Promise<string | null> {
+  const agentId = await kv.get<string>(LINK_TOKEN_KEY(token));
+  return agentId ?? null;
+}
+
 // --- Agent registration ---
 
 interface AgentRecord {
