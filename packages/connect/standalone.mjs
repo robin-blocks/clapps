@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Standalone clapps connector — no npm dependencies required.
-// Usage: node standalone.mjs --relay https://clapps.clawlab.app --token YOUR_TOKEN
+// Usage: node standalone.mjs --relay https://clapps.clawlab.app --token YOUR_TOKEN [--agent-token AGENT_TOKEN]
 //
 // Requires Node.js 18+ (for native fetch and watch).
 
@@ -23,6 +23,7 @@ for (let i = 0; i < args.length; i++) {
 const RELAY_URL = (opts.relay ?? "https://clapps.clawlab.app").replace(/\/$/, "");
 const TOKEN = opts.token;
 const AGENT_URL = (opts.agent ?? "http://localhost:18789").replace(/\/$/, "");
+const AGENT_TOKEN = opts["agent-token"] ?? null;
 const STATE_DIR = opts["state-dir"] ?? resolve(homedir(), ".openclaw", "workspace", "ui", "state");
 const POLL_MS = Number(opts.interval ?? 1500);
 
@@ -51,9 +52,11 @@ async function pollIntents() {
       console.log(`→ Intent: ${intent.intent}`, JSON.stringify(intent.payload));
       try {
         const message = `[CLAPP_INTENT] ${intent.intent} ${JSON.stringify(intent.payload)}`;
+        const headers = { "Content-Type": "application/json" };
+        if (AGENT_TOKEN) headers["Authorization"] = `Bearer ${AGENT_TOKEN}`;
         const agentRes = await fetch(`${AGENT_URL}/hooks/agent`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({ message, sessionKey: `clapp:${intent.clappId}` }),
         });
         if (!agentRes.ok) {
