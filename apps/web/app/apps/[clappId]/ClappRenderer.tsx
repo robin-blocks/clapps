@@ -14,16 +14,17 @@ import type { AppSpec, ViewSpec } from "@clapps/core";
 interface ClappRendererProps {
   clappId: string;
   agentId: string;
+  homeHref?: string;
 }
 
-export function ClappRenderer({ clappId, agentId }: ClappRendererProps) {
+export function ClappRenderer({ clappId, agentId, homeHref }: ClappRendererProps) {
   const relayUrl =
     typeof window !== "undefined" ? window.location.origin : "";
 
   return (
     <ClappProvider relayUrl={relayUrl} clappId={clappId} agentId={agentId}>
       <div className="clapp-shell">
-        <ClappHeader clappId={clappId} agentId={agentId} />
+        <ClappHeader clappId={clappId} agentId={agentId} homeHref={homeHref} />
         <DynamicView clappId={clappId} agentId={agentId} />
       </div>
     </ClappProvider>
@@ -33,9 +34,11 @@ export function ClappRenderer({ clappId, agentId }: ClappRendererProps) {
 function ClappHeader({
   clappId,
   agentId,
+  homeHref,
 }: {
   clappId: string;
   agentId: string;
+  homeHref?: string;
 }) {
   return (
     <header
@@ -48,7 +51,27 @@ function ClappHeader({
         flexShrink: 0,
       }}
     >
-      <span style={{ fontWeight: 600, fontSize: "0.875rem" }}>{clappId}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        {homeHref && (
+          <a
+            href={homeHref}
+            style={{
+              color: "var(--accent)",
+              fontSize: "0.8125rem",
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.125rem",
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Home
+          </a>
+        )}
+        <span style={{ fontWeight: 600, fontSize: "0.875rem" }}>{clappId}</span>
+      </div>
       <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
         <LoadingIndicator />
         {agentId}

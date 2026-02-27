@@ -15,5 +15,11 @@ export default async function ClappPage({
     redirect("/");
   }
 
-  return <ClappRenderer clappId={clappId} agentId={agent} />;
+  return (
+    <ClappRenderer
+      clappId={clappId}
+      agentId={agent}
+      homeHref={`/?agentId=${encodeURIComponent(agent)}`}
+    />
+  );
 }

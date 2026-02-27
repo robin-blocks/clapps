@@ -162,6 +162,27 @@ Column(gap=4):
 - State bindings use dot-path notation matching state keys (e.g. `workspace.files`)
 - Views are re-fetched periodically — update view files and the UI will refresh
 
+## Custom Home Screen
+
+The home screen (app launcher) can be customized by writing a `_home.app.md` view. If no `_home` view exists, the default iPhone-style app grid is shown.
+
+### How it works
+
+1. Write `ui/views/_home.app.md` + associated `.view.md` files — same format as any other app view
+2. The home screen renders your custom view instead of the default grid
+3. Home screen state lives in `ui/state/_home.json` — use the same state format
+4. `_apps.json` still controls which apps are registered and available
+
+### Example
+
+```
+ui/views/_home.app.md         → custom home screen layout
+ui/views/home.dashboard.view.md → home screen module
+ui/state/_home.json           → home screen state
+```
+
+The home view is re-fetched periodically, so you can update it at any time and the UI will refresh.
+
 ## Rules
 
 - Always increment the version number from the previous state
