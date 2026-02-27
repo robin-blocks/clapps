@@ -16,10 +16,12 @@ export {
   StateUpdateSchema,
   AppEntrySchema,
   AppsUpdateSchema,
+  ViewUpdateSchema,
   type IntentMessage,
   type StateUpdate,
   type AppEntry,
   type AppsUpdate,
+  type ViewUpdate,
 } from "./intent/schemas.js";
 
 export { getByPath, setByPath } from "./state/paths.js";

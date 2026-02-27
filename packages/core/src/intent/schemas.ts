@@ -43,3 +43,12 @@ export const AppsUpdateSchema = z.object({
 });
 
 export type AppsUpdate = z.infer<typeof AppsUpdateSchema>;
+
+/** View update pushed by the agent connector */
+export const ViewUpdateSchema = z.object({
+  agentId: z.string(),
+  viewId: z.string(),
+  content: z.string(),
+});
+
+export type ViewUpdate = z.infer<typeof ViewUpdateSchema>;

@@ -28,14 +28,18 @@ async function main() {
   const stateDir =
     opts["state-dir"] ??
     resolve(homedir(), ".openclaw", "workspace", "ui", "state");
+  const viewsDir =
+    opts["views-dir"] ??
+    resolve(homedir(), ".openclaw", "workspace", "ui", "views");
 
   if (!token || !agentId) {
-    console.error("Usage: clapps-connect --token YOUR_TOKEN --agent-id AGENT_ID [--relay URL] [--agent URL] [--agent-token TOKEN]");
+    console.error("Usage: clapps-connect --token YOUR_TOKEN --agent-id AGENT_ID [--relay URL] [--agent URL] [--agent-token TOKEN] [--views-dir PATH]");
     process.exit(1);
   }
 
-  // Ensure state directory exists
+  // Ensure directories exist
   mkdirSync(stateDir, { recursive: true });
+  mkdirSync(viewsDir, { recursive: true });
 
   const agentClient = new AgentClient({ agentUrl, agentToken });
 
@@ -49,6 +53,7 @@ async function main() {
 
   const stateWatcher = new StateWatcher({
     stateDir,
+    viewsDir,
     relayUrl,
     token,
     agentId,
@@ -59,6 +64,7 @@ async function main() {
   console.log(`🤖 Agent at: ${agentUrl}`);
   console.log(`👤 Agent ID: ${agentId}`);
   console.log(`📁 Watching state: ${stateDir}`);
+  console.log(`📄 Watching views: ${viewsDir}`);
 
   intentPoller.start();
   stateWatcher.start();

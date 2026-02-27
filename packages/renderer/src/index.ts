@@ -5,6 +5,7 @@ export { LayoutNodeRenderer } from "./components/LayoutNodeRenderer.js";
 
 export {
   ClappProvider,
+  useClappContext,
   useClappState,
   useClappLoading,
   useIntent,

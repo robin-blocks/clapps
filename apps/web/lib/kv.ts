@@ -98,6 +98,28 @@ export async function getApps(agentId: string): Promise<AppEntry[] | null> {
   return typeof raw === "string" ? JSON.parse(raw) : raw;
 }
 
+// --- Views ---
+
+const VIEW_KEY = (agentId: string, viewId: string) =>
+  `view:${agentId}:${viewId}`;
+
+/** Store a view definition (raw markdown) for an agent */
+export async function setView(
+  agentId: string,
+  viewId: string,
+  content: string,
+): Promise<void> {
+  await kv.set(VIEW_KEY(agentId, viewId), content);
+}
+
+/** Get a view definition (raw markdown) for an agent */
+export async function getView(
+  agentId: string,
+  viewId: string,
+): Promise<string | null> {
+  return kv.get<string>(VIEW_KEY(agentId, viewId));
+}
+
 // --- Agent registration ---
 
 interface AgentRecord {

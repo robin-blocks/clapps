@@ -66,6 +66,102 @@ State keys use dot-paths (e.g. `workspace.current.filename`). The UI binds to th
 - App registration: `ui/state/_apps.json`
 - App state: `ui/state/<clapp-id>.json`
 
+## Custom UI
+
+Define your app's layout and views using `.app.md` and `.view.md` files in `ui/views/`. The connector watches this directory and pushes files to the relay. The browser fetches, parses, and renders them dynamically.
+
+### File Structure
+
+```
+ui/
+  state/
+    _apps.json              → app registry
+    my-app.json             → app state
+  views/
+    my-app.app.md           → app layout (shell + module refs)
+    my-domain.my-view.view.md → module view (layout + state bindings + intents)
+```
+
+### APP.md — App Layout
+
+Defines the app shell and which modules to render. File name must be `<clapp-id>.app.md`.
+
+```markdown
+---
+name: my-app
+domain: my-domain
+---
+
+## Modules
+
+- my-domain/sidebar
+- my-domain/main-content
+
+## Layout
+
+\`\`\`clapp-layout
+Row(gap=0):
+  Column(width=sidebar):
+    Module(ref=my-domain/sidebar)
+  Column(width=main):
+    Module(ref=my-domain/main-content)
+\`\`\`
+```
+
+### VIEW.md — Module View
+
+Defines a single module's state bindings, layout, and intents. File name must be `<domain>.<name>.view.md` matching the module ref `domain/name`.
+
+```markdown
+---
+name: file-list
+domain: workspace
+version: 0.1.0
+---
+
+# File List
+
+## State Bindings
+- `workspace.files` -> string[]
+- `workspace.loading` -> boolean
+
+## Layout
+
+\`\`\`clapp-layout
+Column(gap=4):
+  Heading(level=3): "Files"
+  Conditional(when=workspace.loading):
+    Skeleton(lines=5)
+  Conditional(when=!workspace.loading):
+    List(data=workspace.files, onItemClick=workspace.read):
+      ListItem(icon=file-text): "{{ item }}"
+\`\`\`
+
+## Intents
+| Intent | Payload | Description |
+|--------|---------|-------------|
+| workspace.list | `{}` | List files |
+| workspace.read | `{ filename: string }` | Read a file |
+```
+
+### Available Components
+
+`Column`, `Row`, `Heading`, `IntentButton`, `Icon`, `List`, `ListItem`, `Conditional`, `Skeleton`, `MarkdownContent`, `Card`, `Module`
+
+### Layout DSL
+
+- Indentation: 2 spaces = nesting
+- Props: `Component(key=value, key2=value2)`
+- Text children: `Component(): "text"`
+- State refs in props: `Conditional(when=some.state.path)`
+- Module refs: `Module(ref=domain/name)`
+
+### Notes
+
+- If no view files exist, the UI falls back to a raw state inspector
+- State bindings use dot-path notation matching state keys (e.g. `workspace.files`)
+- Views are re-fetched periodically — update view files and the UI will refresh
+
 ## Rules
 
 - Always increment the version number from the previous state
