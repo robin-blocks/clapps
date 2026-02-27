@@ -1,15 +1,23 @@
 import { NextResponse } from "next/server";
-import { getAllPendingIntents } from "@/lib/kv";
+import { getAgentIntents, validateAgentToken } from "@/lib/kv";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const token = url.searchParams.get("token");
-  const since = url.searchParams.get("since") ?? undefined;
+  const agentId = url.searchParams.get("agentId");
 
-  if (!token || token !== process.env.CLAPPS_AGENT_TOKEN) {
+  if (!token || !agentId) {
+    return NextResponse.json(
+      { error: "Missing token or agentId" },
+      { status: 400 },
+    );
+  }
+
+  const valid = await validateAgentToken(agentId, token);
+  if (!valid) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const intents = await getAllPendingIntents(since);
+  const intents = await getAgentIntents(agentId);
   return NextResponse.json({ intents });
 }

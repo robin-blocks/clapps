@@ -1,10 +1,10 @@
-import { ClappRenderer } from "./ClappRenderer";
+import { redirect } from "next/navigation";
 
-export default async function ClappPage({
+export default async function LegacyClappPage({
   params,
 }: {
   params: Promise<{ clappId: string }>;
 }) {
   const { clappId } = await params;
-  return <ClappRenderer clappId={clappId} />;
+  redirect(`/apps/${clappId}`);
 }

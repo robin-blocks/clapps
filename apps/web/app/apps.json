@@ -1,0 +1,10 @@
+[
+  {
+    "id": "workspace-viewer",
+    "name": "Workspace Viewer",
+    "description": "Browse and read workspace files",
+    "icon": "folder-open",
+    "tags": ["workspace", "files"],
+    "pinned": true
+  }
+]

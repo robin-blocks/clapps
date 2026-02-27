@@ -5,23 +5,24 @@ import { WorkspaceViewer } from "./WorkspaceViewer";
 
 interface ClappRendererProps {
   clappId: string;
+  agentId: string;
 }
 
-export function ClappRenderer({ clappId }: ClappRendererProps) {
+export function ClappRenderer({ clappId, agentId }: ClappRendererProps) {
   const relayUrl =
     typeof window !== "undefined" ? window.location.origin : "";
 
   return (
-    <ClappProvider relayUrl={relayUrl} clappId={clappId}>
+    <ClappProvider relayUrl={relayUrl} clappId={clappId} agentId={agentId}>
       <div className="clapp-shell">
-        <ClappHeader clappId={clappId} />
+        <ClappHeader clappId={clappId} agentId={agentId} />
         <WorkspaceViewer />
       </div>
     </ClappProvider>
   );
 }
 
-function ClappHeader({ clappId }: { clappId: string }) {
+function ClappHeader({ clappId, agentId }: { clappId: string; agentId: string }) {
   return (
     <header
       style={{
@@ -36,7 +37,10 @@ function ClappHeader({ clappId }: { clappId: string }) {
       <span style={{ fontWeight: 600, fontSize: "0.875rem" }}>
         {clappId}
       </span>
-      <LoadingIndicator />
+      <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
+        <LoadingIndicator />
+        {agentId}
+      </span>
     </header>
   );
 }
@@ -45,7 +49,7 @@ function LoadingIndicator() {
   const loading = useClappLoading();
   if (!loading) return null;
   return (
-    <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
+    <span style={{ marginRight: "0.5rem" }}>
       connecting...
     </span>
   );

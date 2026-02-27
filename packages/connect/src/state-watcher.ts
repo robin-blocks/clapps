@@ -6,6 +6,7 @@ export interface StateWatcherOptions {
   stateDir: string;
   relayUrl: string;
   token: string;
+  agentId: string;
   onError?: (error: Error) => void;
 }
 
@@ -45,7 +46,11 @@ export class StateWatcher {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.options.token}`,
         },
-        body: JSON.stringify({ clappId, ...state }),
+        body: JSON.stringify({
+          agentId: this.options.agentId,
+          clappId,
+          ...state,
+        }),
       });
 
       if (!res.ok) {

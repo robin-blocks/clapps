@@ -35,6 +35,7 @@ const ClappContext = createContext<ClappContextValue | null>(null);
 export interface ClappProviderProps {
   relayUrl: string;
   clappId: string;
+  agentId: string;
   children: ReactNode;
   pollInterval?: number;
 }
@@ -42,6 +43,7 @@ export interface ClappProviderProps {
 export function ClappProvider({
   relayUrl,
   clappId,
+  agentId,
   children,
   pollInterval = 1500,
 }: ClappProviderProps) {
@@ -52,7 +54,7 @@ export function ClappProvider({
     storeRef.current = createClappStore();
   }
   if (!clientRef.current) {
-    clientRef.current = new ClappClient({ relayUrl, clappId });
+    clientRef.current = new ClappClient({ relayUrl, clappId, agentId });
   }
 
   useEffect(() => {
@@ -65,7 +67,7 @@ export function ClappProvider({
     });
     poller.start();
     return () => poller.stop();
-  }, [relayUrl, clappId, pollInterval]);
+  }, [relayUrl, clappId, agentId, pollInterval]);
 
   return (
     <ClappContext.Provider

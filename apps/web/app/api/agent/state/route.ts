@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { StateUpdateSchema } from "@clapps/core";
-import { setState } from "@/lib/kv";
+import { setState, validateAgentToken } from "@/lib/kv";
 
 export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization");
   const token = authHeader?.replace("Bearer ", "");
 
-  if (!token || token !== process.env.CLAPPS_AGENT_TOKEN) {
+  if (!token) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -14,7 +14,12 @@ export async function POST(request: Request) {
     const body = await request.json();
     const update = StateUpdateSchema.parse(body);
 
-    await setState(update.clappId, {
+    const valid = await validateAgentToken(update.agentId, token);
+    if (!valid) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    await setState(update.agentId, update.clappId, {
       version: update.version,
       timestamp: update.timestamp,
       state: update.state,

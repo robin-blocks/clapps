@@ -22,24 +22,27 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const relayUrl = opts.relay ?? "https://clapps.clawlab.app";
   const token = opts.token;
+  const agentId = opts["agent-id"];
   const agentUrl = opts.agent ?? "http://localhost:18789";
+  const agentToken = opts["agent-token"];
   const stateDir =
     opts["state-dir"] ??
     resolve(homedir(), ".openclaw", "workspace", "ui", "state");
 
-  if (!token) {
-    console.error("Usage: clapps-connect --token YOUR_TOKEN [--relay URL] [--agent URL]");
+  if (!token || !agentId) {
+    console.error("Usage: clapps-connect --token YOUR_TOKEN --agent-id AGENT_ID [--relay URL] [--agent URL] [--agent-token TOKEN]");
     process.exit(1);
   }
 
   // Ensure state directory exists
   mkdirSync(stateDir, { recursive: true });
 
-  const agentClient = new AgentClient({ agentUrl });
+  const agentClient = new AgentClient({ agentUrl, agentToken });
 
   const intentPoller = new IntentPoller({
     relayUrl,
     token,
+    agentId,
     agentClient,
     onError: (err) => console.error("[intent-poller]", err.message),
   });
@@ -48,11 +51,13 @@ async function main() {
     stateDir,
     relayUrl,
     token,
+    agentId,
     onError: (err) => console.error("[state-watcher]", err.message),
   });
 
   console.log(`🔗 Connecting to relay: ${relayUrl}`);
   console.log(`🤖 Agent at: ${agentUrl}`);
+  console.log(`👤 Agent ID: ${agentId}`);
   console.log(`📁 Watching state: ${stateDir}`);
 
   intentPoller.start();

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Standalone clapps connector — no npm dependencies required.
-// Usage: node standalone.mjs --relay https://clapps.clawlab.app --token YOUR_TOKEN [--agent-token AGENT_TOKEN]
+// Usage: node standalone.mjs --relay https://clapps.clawlab.app --token YOUR_TOKEN --agent-id robin [--agent-token AGENT_TOKEN]
 //
 // Requires Node.js 18+ (for native fetch and watch).
 
@@ -22,13 +22,14 @@ for (let i = 0; i < args.length; i++) {
 
 const RELAY_URL = (opts.relay ?? "https://clapps.clawlab.app").replace(/\/$/, "");
 const TOKEN = opts.token;
+const AGENT_ID = opts["agent-id"];
 const AGENT_URL = (opts.agent ?? "http://localhost:18789").replace(/\/$/, "");
 const AGENT_TOKEN = opts["agent-token"] ?? null;
 const STATE_DIR = opts["state-dir"] ?? resolve(homedir(), ".openclaw", "workspace", "ui", "state");
 const POLL_MS = Number(opts.interval ?? 1500);
 
-if (!TOKEN) {
-  console.error("Usage: node standalone.mjs --token YOUR_TOKEN [--relay URL] [--agent URL] [--state-dir PATH]");
+if (!TOKEN || !AGENT_ID) {
+  console.error("Usage: node standalone.mjs --token YOUR_TOKEN --agent-id AGENT_ID [--relay URL] [--agent URL] [--state-dir PATH]");
   process.exit(1);
 }
 
@@ -37,15 +38,16 @@ if (!existsSync(STATE_DIR)) {
   await mkdir(STATE_DIR, { recursive: true });
 }
 
-console.log(`🔗 Relay:  ${RELAY_URL}`);
-console.log(`🤖 Agent:  ${AGENT_URL}`);
-console.log(`📁 State:  ${STATE_DIR}`);
+console.log(`🔗 Relay:    ${RELAY_URL}`);
+console.log(`🤖 Agent:    ${AGENT_URL}`);
+console.log(`👤 Agent ID: ${AGENT_ID}`);
+console.log(`📁 State:    ${STATE_DIR}`);
 console.log();
 
 // --- Intent poller ---
 async function pollIntents() {
   try {
-    const res = await fetch(`${RELAY_URL}/api/agent/intents?token=${TOKEN}`);
+    const res = await fetch(`${RELAY_URL}/api/agent/intents?token=${TOKEN}&agentId=${AGENT_ID}`);
     if (!res.ok) return;
     const { intents } = await res.json();
     for (const intent of intents) {
@@ -57,7 +59,7 @@ async function pollIntents() {
         const agentRes = await fetch(`${AGENT_URL}/hooks/agent`, {
           method: "POST",
           headers,
-          body: JSON.stringify({ message, sessionKey: `clapp:${intent.clappId}` }),
+          body: JSON.stringify({ message, sessionKey: "agent:main:main" }),
         });
         if (!agentRes.ok) {
           console.error(`  ✗ Agent returned ${agentRes.status}`);
@@ -86,7 +88,7 @@ async function pushState(filePath) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${TOKEN}`,
       },
-      body: JSON.stringify({ clappId, ...state }),
+      body: JSON.stringify({ agentId: AGENT_ID, clappId, ...state }),
     });
 
     if (res.ok) {

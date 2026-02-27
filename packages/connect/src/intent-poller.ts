@@ -4,6 +4,7 @@ import { AgentClient } from "./agent-client.js";
 export interface IntentPollerOptions {
   relayUrl: string;
   token: string;
+  agentId: string;
   agentClient: AgentClient;
   intervalMs?: number;
   onError?: (error: Error) => void;
@@ -39,6 +40,7 @@ export class IntentPoller {
     try {
       const url = new URL("/api/agent/intents", this.options.relayUrl);
       url.searchParams.set("token", this.options.token);
+      url.searchParams.set("agentId", this.options.agentId);
       if (this.lastSeen) {
         url.searchParams.set("since", this.lastSeen);
       }

@@ -1,42 +1,48 @@
 import { kv } from "@vercel/kv";
 import type { IntentMessage, ClappState } from "@clapps/core";
 
-const INTENT_QUEUE_KEY = (clappId: string) => `intents:${clappId}`;
-const STATE_KEY = (clappId: string) => `state:${clappId}`;
+const INTENT_QUEUE_KEY = (agentId: string, clappId: string) =>
+  `intents:${agentId}:${clappId}`;
+const STATE_KEY = (agentId: string, clappId: string) =>
+  `state:${agentId}:${clappId}`;
+const AGENT_KEY = (agentId: string) => `agent:${agentId}`;
 
-/** Push an intent to the queue */
+// --- Intents ---
+
+/** Push an intent to the agent-scoped queue */
 export async function pushIntent(intent: IntentMessage): Promise<void> {
-  await kv.rpush(INTENT_QUEUE_KEY(intent.clappId), JSON.stringify(intent));
-  // Expire after 1 hour to prevent unbounded growth
-  await kv.expire(INTENT_QUEUE_KEY(intent.clappId), 3600);
+  const key = INTENT_QUEUE_KEY(intent.agentId, intent.clappId);
+  await kv.rpush(key, JSON.stringify(intent));
+  await kv.expire(key, 3600);
 }
 
-/** Get pending intents (and remove them from the queue) */
+/** Pop pending intents for a specific agent+clapp */
 export async function popIntents(
+  agentId: string,
   clappId: string,
   limit = 10,
 ): Promise<IntentMessage[]> {
+  const key = INTENT_QUEUE_KEY(agentId, clappId);
   const intents: IntentMessage[] = [];
   for (let i = 0; i < limit; i++) {
-    const raw = await kv.lpop<string>(INTENT_QUEUE_KEY(clappId));
+    const raw = await kv.lpop<string>(key);
     if (!raw) break;
     intents.push(typeof raw === "string" ? JSON.parse(raw) : raw);
   }
   return intents;
 }
 
-/** Get all pending intents for any clapp (for the agent connector) */
-export async function getAllPendingIntents(
-  since?: string,
+/** Get all pending intents for an agent across all clapps */
+export async function getAgentIntents(
+  agentId: string,
 ): Promise<IntentMessage[]> {
-  // Scan for all intent queue keys
+  const prefix = `intents:${agentId}:`;
   const keys: string[] = [];
-  let done = false;
   let scanCursor = 0;
+  let done = false;
   while (!done) {
-    const c = scanCursor;
-    const result: [string, string[]] = await kv.scan(c, {
-      match: "intents:*",
+    const result: [string, string[]] = await kv.scan(scanCursor, {
+      match: `${prefix}*`,
       count: 100,
     });
     scanCursor = Number(result[0]);
@@ -46,32 +52,66 @@ export async function getAllPendingIntents(
 
   const allIntents: IntentMessage[] = [];
   for (const key of keys) {
-    const clappId = key.replace("intents:", "");
-    const intents = await popIntents(clappId);
+    const clappId = key.slice(prefix.length);
+    const intents = await popIntents(agentId, clappId);
     allIntents.push(...intents);
   }
-
-  if (since) {
-    const sinceIdx = allIntents.findIndex((i) => i.id === since);
-    if (sinceIdx >= 0) {
-      return allIntents.slice(sinceIdx + 1);
-    }
-  }
-
   return allIntents;
 }
 
-/** Store state for a clapp */
+// --- State ---
+
+/** Store state for an agent's clapp */
 export async function setState(
+  agentId: string,
   clappId: string,
   state: ClappState,
 ): Promise<void> {
-  await kv.set(STATE_KEY(clappId), JSON.stringify(state));
+  await kv.set(STATE_KEY(agentId, clappId), JSON.stringify(state));
 }
 
-/** Get current state for a clapp */
-export async function getState(clappId: string): Promise<ClappState | null> {
-  const raw = await kv.get<string>(STATE_KEY(clappId));
+/** Get current state for an agent's clapp */
+export async function getState(
+  agentId: string,
+  clappId: string,
+): Promise<ClappState | null> {
+  const raw = await kv.get<string>(STATE_KEY(agentId, clappId));
   if (!raw) return null;
   return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+// --- Agent registration ---
+
+interface AgentRecord {
+  agentId: string;
+  token: string;
+  label: string;
+  createdAt: string;
+}
+
+/** Register a new agent (or overwrite existing) */
+export async function registerAgent(
+  agentId: string,
+  token: string,
+  label: string,
+): Promise<void> {
+  const record: AgentRecord = {
+    agentId,
+    token,
+    label,
+    createdAt: new Date().toISOString(),
+  };
+  await kv.set(AGENT_KEY(agentId), JSON.stringify(record));
+}
+
+/** Validate an agent's token. Returns true if valid. */
+export async function validateAgentToken(
+  agentId: string,
+  token: string,
+): Promise<boolean> {
+  const raw = await kv.get<string>(AGENT_KEY(agentId));
+  if (!raw) return false;
+  const record: AgentRecord =
+    typeof raw === "string" ? JSON.parse(raw) : raw;
+  return record.token === token;
 }
