@@ -10,16 +10,13 @@ interface AppEntry {
   id: string;
   name: string;
   description: string;
+  emoji: string;
   icon: string;
   tags: string[];
   pinned: boolean;
 }
 
 const apps: AppEntry[] = appsData;
-
-const ICONS: Record<string, string> = {
-  "folder-open": "\uD83D\uDCC2",
-};
 
 export default function Home() {
   const [agentId, setAgentId] = useState<string | null>(null);
@@ -158,29 +155,18 @@ export default function Home() {
       <main
         style={{
           flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
           padding: "2rem 1.5rem",
-          maxWidth: "48rem",
-          margin: "0 auto",
-          width: "100%",
         }}
       >
-        <h2
-          style={{
-            fontSize: "0.8125rem",
-            fontWeight: 600,
-            color: "var(--muted)",
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-            marginBottom: "1rem",
-          }}
-        >
-          Apps
-        </h2>
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(16rem, 1fr))",
-            gap: "0.75rem",
+            gridTemplateColumns: "repeat(4, 76px)",
+            gap: "1.5rem",
+            justifyContent: "center",
           }}
         >
           {apps.map((app) => (
@@ -189,36 +175,42 @@ export default function Home() {
               href={`/apps/${app.id}?agent=${agentId}`}
               style={{
                 display: "flex",
+                flexDirection: "column",
                 alignItems: "center",
-                gap: "0.75rem",
-                padding: "1rem",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--radius)",
-                background: "var(--card-bg)",
-                color: "var(--fg)",
+                gap: "0.375rem",
                 textDecoration: "none",
-                transition: "border-color 0.15s, background 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = "var(--accent)";
-                e.currentTarget.style.background = "var(--hover-bg)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = "var(--border)";
-                e.currentTarget.style.background = "var(--card-bg)";
+                color: "var(--fg)",
               }}
             >
-              <span style={{ fontSize: "1.5rem" }}>
-                {ICONS[app.icon] ?? app.icon}
-              </span>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>
-                  {app.name}
-                </div>
-                <div style={{ color: "var(--muted)", fontSize: "0.8125rem", marginTop: "0.125rem" }}>
-                  {app.description}
-                </div>
+              <div
+                style={{
+                  width: 60,
+                  height: 60,
+                  borderRadius: 14,
+                  background: "linear-gradient(135deg, var(--card-bg) 0%, var(--hover-bg, var(--card-bg)) 100%)",
+                  border: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "1.75rem",
+                }}
+              >
+                {app.emoji}
               </div>
+              <span
+                style={{
+                  fontSize: "0.6875rem",
+                  textAlign: "center",
+                  lineHeight: 1.2,
+                  maxWidth: 76,
+                  overflow: "hidden",
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                }}
+              >
+                {app.name}
+              </span>
             </Link>
           ))}
         </div>
