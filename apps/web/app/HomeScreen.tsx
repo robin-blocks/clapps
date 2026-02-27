@@ -118,8 +118,9 @@ function DefaultHomeGrid({
           `/api/apps/${encodeURIComponent(agentId)}`,
           sessionToken,
         );
+        if (!res.ok) return;
         const data = await res.json();
-        if (!cancelled) setApps(data);
+        if (!cancelled && Array.isArray(data)) setApps(data);
       } catch {
         if (!cancelled) setApps([]);
       } finally {
