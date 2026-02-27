@@ -10,22 +10,24 @@ import {
 import { useStore } from "zustand";
 import { parseAppMd, parseViewMd } from "@clapps/core";
 import type { AppSpec, ViewSpec } from "@clapps/core";
+import { relayFetch } from "@/lib/relay-fetch";
 
 interface ClappRendererProps {
   clappId: string;
   agentId: string;
+  sessionToken?: string;
   homeHref?: string;
 }
 
-export function ClappRenderer({ clappId, agentId, homeHref }: ClappRendererProps) {
+export function ClappRenderer({ clappId, agentId, sessionToken, homeHref }: ClappRendererProps) {
   const relayUrl =
     typeof window !== "undefined" ? window.location.origin : "";
 
   return (
-    <ClappProvider relayUrl={relayUrl} clappId={clappId} agentId={agentId}>
+    <ClappProvider relayUrl={relayUrl} clappId={clappId} agentId={agentId} sessionToken={sessionToken}>
       <div className="clapp-shell">
         <ClappHeader clappId={clappId} agentId={agentId} homeHref={homeHref} />
-        <DynamicView clappId={clappId} agentId={agentId} />
+        <DynamicView clappId={clappId} agentId={agentId} sessionToken={sessionToken} />
       </div>
     </ClappProvider>
   );
@@ -97,17 +99,20 @@ type ViewState =
 function DynamicView({
   clappId,
   agentId,
+  sessionToken,
 }: {
   clappId: string;
   agentId: string;
+  sessionToken?: string;
 }) {
   const [viewState, setViewState] = useState<ViewState>({ status: "loading" });
 
   const fetchViews = useCallback(async () => {
     try {
       // Fetch the app definition
-      const appRes = await fetch(
-        `/api/views/${encodeURIComponent(agentId)}/${encodeURIComponent(clappId)}.app`
+      const appRes = await relayFetch(
+        `/api/views/${encodeURIComponent(agentId)}/${encodeURIComponent(clappId)}.app`,
+        sessionToken,
       );
 
       if (appRes.status === 404) {
@@ -132,8 +137,9 @@ function DynamicView({
         appSpec.modules.map(async (moduleRef) => {
           // Module refs are "domain/name" — the viewId is the full ref
           const viewId = moduleRef.replace("/", ".");
-          const modRes = await fetch(
-            `/api/views/${encodeURIComponent(agentId)}/${encodeURIComponent(viewId)}.view`
+          const modRes = await relayFetch(
+            `/api/views/${encodeURIComponent(agentId)}/${encodeURIComponent(viewId)}.view`,
+            sessionToken,
           );
           if (!modRes.ok) return null;
           const markdown = await modRes.text();
@@ -152,7 +158,7 @@ function DynamicView({
         message: err instanceof Error ? err.message : "Failed to load views",
       });
     }
-  }, [clappId, agentId]);
+  }, [clappId, agentId, sessionToken]);
 
   useEffect(() => {
     fetchViews();

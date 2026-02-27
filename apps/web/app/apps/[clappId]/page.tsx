@@ -6,20 +6,24 @@ export default async function ClappPage({
   searchParams,
 }: {
   params: Promise<{ clappId: string }>;
-  searchParams: Promise<{ agent?: string }>;
+  searchParams: Promise<{ agent?: string; session?: string }>;
 }) {
   const { clappId } = await params;
-  const { agent } = await searchParams;
+  const { agent, session } = await searchParams;
 
   if (!agent) {
     redirect("/");
   }
 
+  const homeQuery = new URLSearchParams({ agentId: agent });
+  if (session) homeQuery.set("session", session);
+
   return (
     <ClappRenderer
       clappId={clappId}
       agentId={agent}
-      homeHref={`/?agentId=${encodeURIComponent(agent)}`}
+      sessionToken={session}
+      homeHref={`/?${homeQuery.toString()}`}
     />
   );
 }

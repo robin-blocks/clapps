@@ -5,9 +5,11 @@ import { ClappRenderer } from "./apps/[clappId]/ClappRenderer";
 import { HomeScreen } from "./HomeScreen";
 
 const STORAGE_KEY = "clapps:agentId";
+const SESSION_STORAGE_KEY = "clapps:session";
 
 export default function Home() {
   const [agentId, setAgentId] = useState<string | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | undefined>(undefined);
   const [input, setInput] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [activeApp, setActiveApp] = useState<string | null>(null);
@@ -15,6 +17,17 @@ export default function Home() {
   useEffect(() => {
     const url = new URL(window.location.href);
     const fromUrl = url.searchParams.get("agentId");
+    const sessionFromUrl = url.searchParams.get("session");
+
+    if (sessionFromUrl) {
+      localStorage.setItem(SESSION_STORAGE_KEY, sessionFromUrl);
+      setSessionToken(sessionFromUrl);
+      url.searchParams.delete("session");
+    } else {
+      const storedSession = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (storedSession) setSessionToken(storedSession);
+    }
+
     if (fromUrl) {
       const val = fromUrl.trim().toLowerCase();
       localStorage.setItem(STORAGE_KEY, val);
@@ -24,6 +37,10 @@ export default function Home() {
     } else {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) setAgentId(stored);
+      // Clean URL if session param was present
+      if (sessionFromUrl) {
+        window.history.replaceState({}, "", url.pathname);
+      }
     }
     setLoaded(true);
   }, []);
@@ -45,7 +62,9 @@ export default function Home() {
 
   function clearAgentId() {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
     setAgentId(null);
+    setSessionToken(undefined);
     setActiveApp(null);
     setInput("");
   }
@@ -145,7 +164,7 @@ export default function Home() {
           </div>
         </header>
 
-        <HomeScreen agentId={agentId} onOpenApp={openApp} />
+        <HomeScreen agentId={agentId} sessionToken={sessionToken} onOpenApp={openApp} />
       </div>
 
       {/* App layer */}
@@ -161,7 +180,7 @@ export default function Home() {
             </svg>
             Home
           </button>
-          <ClappRenderer clappId={activeApp} agentId={agentId} />
+          <ClappRenderer clappId={activeApp} agentId={agentId} sessionToken={sessionToken} />
         </div>
       )}
     </div>

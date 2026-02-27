@@ -66,6 +66,33 @@ async function main() {
   console.log(`📁 Watching state: ${stateDir}`);
   console.log(`📄 Watching views: ${viewsDir}`);
 
+  // Create a browser session
+  try {
+    const sessionRes = await fetch(`${relayUrl}/api/agent/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ agentId }),
+    });
+
+    if (sessionRes.ok) {
+      const session = (await sessionRes.json()) as {
+        sessionToken: string;
+        expiresAt: string;
+      };
+      const browserUrl = `${relayUrl}/?agentId=${encodeURIComponent(agentId)}&session=${encodeURIComponent(session.sessionToken)}`;
+      console.log(`\n🌐 Open in browser: ${browserUrl}\n`);
+    } else {
+      console.warn(`⚠️  Failed to create session: ${sessionRes.status}`);
+    }
+  } catch (err) {
+    console.warn(
+      `⚠️  Could not create session: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+
   intentPoller.start();
   stateWatcher.start();
 

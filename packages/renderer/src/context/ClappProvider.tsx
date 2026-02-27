@@ -36,6 +36,7 @@ export interface ClappProviderProps {
   relayUrl: string;
   clappId: string;
   agentId: string;
+  sessionToken?: string;
   children: ReactNode;
   pollInterval?: number;
 }
@@ -44,6 +45,7 @@ export function ClappProvider({
   relayUrl,
   clappId,
   agentId,
+  sessionToken,
   children,
   pollInterval = 1500,
 }: ClappProviderProps) {
@@ -54,7 +56,7 @@ export function ClappProvider({
     storeRef.current = createClappStore();
   }
   if (!clientRef.current) {
-    clientRef.current = new ClappClient({ relayUrl, clappId, agentId });
+    clientRef.current = new ClappClient({ relayUrl, clappId, agentId, sessionToken });
   }
 
   useEffect(() => {

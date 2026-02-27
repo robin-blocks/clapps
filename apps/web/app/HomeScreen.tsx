@@ -7,6 +7,7 @@ import {
 } from "@clapps/renderer";
 import { parseAppMd, parseViewMd } from "@clapps/core";
 import type { AppSpec, ViewSpec } from "@clapps/core";
+import { relayFetch } from "@/lib/relay-fetch";
 
 interface AppEntry {
   id: string;
@@ -20,10 +21,11 @@ interface AppEntry {
 
 interface HomeScreenProps {
   agentId: string;
+  sessionToken?: string;
   onOpenApp: (clappId: string) => void;
 }
 
-export function HomeScreen({ agentId, onOpenApp }: HomeScreenProps) {
+export function HomeScreen({ agentId, sessionToken, onOpenApp }: HomeScreenProps) {
   const [homeView, setHomeView] = useState<{
     appSpec: AppSpec;
     modules: ViewSpec[];
@@ -32,8 +34,9 @@ export function HomeScreen({ agentId, onOpenApp }: HomeScreenProps) {
 
   const fetchHomeView = useCallback(async () => {
     try {
-      const appRes = await fetch(
-        `/api/views/${encodeURIComponent(agentId)}/_home.app`
+      const appRes = await relayFetch(
+        `/api/views/${encodeURIComponent(agentId)}/_home.app`,
+        sessionToken,
       );
       if (appRes.status === 404 || !appRes.ok) {
         setHomeView(null);
@@ -47,8 +50,9 @@ export function HomeScreen({ agentId, onOpenApp }: HomeScreenProps) {
       const moduleResults = await Promise.all(
         appSpec.modules.map(async (moduleRef) => {
           const viewId = moduleRef.replace("/", ".");
-          const modRes = await fetch(
-            `/api/views/${encodeURIComponent(agentId)}/${encodeURIComponent(viewId)}.view`
+          const modRes = await relayFetch(
+            `/api/views/${encodeURIComponent(agentId)}/${encodeURIComponent(viewId)}.view`,
+            sessionToken,
           );
           if (!modRes.ok) return null;
           const markdown = await modRes.text();
@@ -63,7 +67,7 @@ export function HomeScreen({ agentId, onOpenApp }: HomeScreenProps) {
     } finally {
       setChecked(true);
     }
-  }, [agentId]);
+  }, [agentId, sessionToken]);
 
   useEffect(() => {
     fetchHomeView();
@@ -82,7 +86,7 @@ export function HomeScreen({ agentId, onOpenApp }: HomeScreenProps) {
   if (homeView) {
     const relayUrl = typeof window !== "undefined" ? window.location.origin : "";
     return (
-      <ClappProvider relayUrl={relayUrl} clappId="_home" agentId={agentId}>
+      <ClappProvider relayUrl={relayUrl} clappId="_home" agentId={agentId} sessionToken={sessionToken}>
         <div className="clapp-app">
           <AppRenderer spec={homeView.appSpec} modules={homeView.modules} />
         </div>
@@ -90,14 +94,16 @@ export function HomeScreen({ agentId, onOpenApp }: HomeScreenProps) {
     );
   }
 
-  return <DefaultHomeGrid agentId={agentId} onOpenApp={onOpenApp} />;
+  return <DefaultHomeGrid agentId={agentId} sessionToken={sessionToken} onOpenApp={onOpenApp} />;
 }
 
 function DefaultHomeGrid({
   agentId,
+  sessionToken,
   onOpenApp,
 }: {
   agentId: string;
+  sessionToken?: string;
   onOpenApp: (clappId: string) => void;
 }) {
   const [apps, setApps] = useState<AppEntry[]>([]);
@@ -108,7 +114,10 @@ function DefaultHomeGrid({
 
     async function fetchApps() {
       try {
-        const res = await fetch(`/api/apps/${encodeURIComponent(agentId)}`);
+        const res = await relayFetch(
+          `/api/apps/${encodeURIComponent(agentId)}`,
+          sessionToken,
+        );
         const data = await res.json();
         if (!cancelled) setApps(data);
       } catch {
@@ -124,7 +133,7 @@ function DefaultHomeGrid({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [agentId]);
+  }, [agentId, sessionToken]);
 
   if (loading) {
     return (

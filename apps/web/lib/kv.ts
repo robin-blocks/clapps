@@ -120,6 +120,42 @@ export async function getView(
   return kv.get<string>(VIEW_KEY(agentId, viewId));
 }
 
+// --- Sessions ---
+
+const SESSION_KEY = (token: string) => `session:${token}`;
+
+interface SessionRecord {
+  token: string;
+  agentId: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+const SESSION_TTL = 86400; // 24 hours
+
+/** Create a session for browser access, scoped to an agentId */
+export async function createSession(agentId: string): Promise<SessionRecord> {
+  const token = crypto.randomUUID();
+  const now = new Date();
+  const record: SessionRecord = {
+    token,
+    agentId,
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + SESSION_TTL * 1000).toISOString(),
+  };
+  await kv.set(SESSION_KEY(token), JSON.stringify(record), { ex: SESSION_TTL });
+  return record;
+}
+
+/** Validate a session token. Returns the agentId if valid, null otherwise. */
+export async function validateSession(token: string): Promise<string | null> {
+  const raw = await kv.get<string>(SESSION_KEY(token));
+  if (!raw) return null;
+  const record: SessionRecord =
+    typeof raw === "string" ? JSON.parse(raw) : raw;
+  return record.agentId;
+}
+
 // --- Agent registration ---
 
 interface AgentRecord {

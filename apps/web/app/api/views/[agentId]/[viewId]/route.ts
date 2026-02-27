@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { getView } from "@/lib/kv";
+import { requireSession } from "@/lib/session";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ agentId: string; viewId: string }> },
 ) {
   const { agentId, viewId } = await params;
+
+  const session = await requireSession(request, agentId);
+  if (!session.valid) return session.response;
+
   const content = await getView(agentId, viewId);
   if (content === null) {
     return new NextResponse(null, { status: 404 });

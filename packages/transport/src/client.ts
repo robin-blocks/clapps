@@ -4,6 +4,7 @@ export interface ClappClientOptions {
   relayUrl: string;
   clappId: string;
   agentId: string;
+  sessionToken?: string;
 }
 
 /** Client for communicating with the clapps relay */
@@ -11,11 +12,21 @@ export class ClappClient {
   private relayUrl: string;
   private clappId: string;
   private agentId: string;
+  private sessionToken?: string;
 
   constructor(options: ClappClientOptions) {
     this.relayUrl = options.relayUrl.replace(/\/$/, "");
     this.clappId = options.clappId;
     this.agentId = options.agentId;
+    this.sessionToken = options.sessionToken;
+  }
+
+  private headers(): Record<string, string> {
+    const h: Record<string, string> = { "Content-Type": "application/json" };
+    if (this.sessionToken) {
+      h["X-Session-Token"] = this.sessionToken;
+    }
+    return h;
   }
 
   /** Send an intent to the relay */
@@ -34,7 +45,7 @@ export class ClappClient {
 
     const res = await fetch(`${this.relayUrl}/api/intent`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.headers(),
       body: JSON.stringify(message),
     });
 
@@ -47,6 +58,7 @@ export class ClappClient {
   async getState(): Promise<ClappState | null> {
     const res = await fetch(
       `${this.relayUrl}/api/state/${this.agentId}/${this.clappId}`,
+      { headers: this.headers() },
     );
 
     if (res.status === 404) return null;
