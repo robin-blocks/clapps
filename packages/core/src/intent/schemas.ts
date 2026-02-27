@@ -22,3 +22,24 @@ export const StateUpdateSchema = z.object({
 });
 
 export type StateUpdate = z.infer<typeof StateUpdateSchema>;
+
+/** A single app entry registered by an agent */
+export const AppEntrySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  emoji: z.string().default("📦"),
+  icon: z.string().default(""),
+  tags: z.array(z.string()).default([]),
+  pinned: z.boolean().default(false),
+});
+
+export type AppEntry = z.infer<typeof AppEntrySchema>;
+
+/** Apps update pushed by the agent connector */
+export const AppsUpdateSchema = z.object({
+  agentId: z.string(),
+  apps: z.array(AppEntrySchema),
+});
+
+export type AppsUpdate = z.infer<typeof AppsUpdateSchema>;

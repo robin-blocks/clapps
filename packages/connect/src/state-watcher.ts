@@ -37,8 +37,13 @@ export class StateWatcher {
   private async pushState(filePath: string): Promise<void> {
     try {
       const content = await readFile(filePath, "utf-8");
-      const state = JSON.parse(content);
-      const clappId = basename(filePath, ".json");
+      const parsed = JSON.parse(content);
+      const name = basename(filePath, ".json");
+
+      if (name === "_apps") {
+        await this.pushApps(parsed);
+        return;
+      }
 
       const res = await fetch(`${this.options.relayUrl}/api/agent/state`, {
         method: "POST",
@@ -48,8 +53,8 @@ export class StateWatcher {
         },
         body: JSON.stringify({
           agentId: this.options.agentId,
-          clappId,
-          ...state,
+          clappId: name,
+          ...parsed,
         }),
       });
 
@@ -58,6 +63,24 @@ export class StateWatcher {
       }
     } catch (err) {
       this.options.onError?.(err as Error);
+    }
+  }
+
+  private async pushApps(apps: unknown[]): Promise<void> {
+    const res = await fetch(`${this.options.relayUrl}/api/agent/apps`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.options.token}`,
+      },
+      body: JSON.stringify({
+        agentId: this.options.agentId,
+        apps,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to push apps: ${res.status}`);
     }
   }
 }

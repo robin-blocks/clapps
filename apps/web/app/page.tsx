@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import appsData from "./apps.json";
 
 const STORAGE_KEY = "clapps:agentId";
 
@@ -16,12 +15,12 @@ interface AppEntry {
   pinned: boolean;
 }
 
-const apps: AppEntry[] = appsData;
-
 export default function Home() {
   const [agentId, setAgentId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [apps, setApps] = useState<AppEntry[]>([]);
+  const [appsLoading, setAppsLoading] = useState(false);
 
   useEffect(() => {
     // Priority: URL param → localStorage → prompt
@@ -40,6 +39,19 @@ export default function Home() {
     }
     setLoaded(true);
   }, []);
+
+  useEffect(() => {
+    if (!agentId) {
+      setApps([]);
+      return;
+    }
+    setAppsLoading(true);
+    fetch(`/api/apps/${agentId}`)
+      .then((res) => res.json())
+      .then((data) => setApps(data))
+      .catch(() => setApps([]))
+      .finally(() => setAppsLoading(false));
+  }, [agentId]);
 
   function saveAgentId() {
     const val = input.trim().toLowerCase();
@@ -161,59 +173,69 @@ export default function Home() {
           padding: "2rem 1.5rem",
         }}
       >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 76px)",
-            gap: "1.5rem",
-            justifyContent: "center",
-          }}
-        >
-          {apps.map((app) => (
-            <Link
-              key={app.id}
-              href={`/apps/${app.id}?agent=${agentId}`}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: "0.375rem",
-                textDecoration: "none",
-                color: "var(--fg)",
-              }}
-            >
-              <div
+        {appsLoading ? (
+          <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>
+            Loading apps...
+          </p>
+        ) : apps.length === 0 ? (
+          <p style={{ color: "var(--muted)", fontSize: "0.875rem" }}>
+            No apps registered yet.
+          </p>
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(4, 76px)",
+              gap: "1.5rem",
+              justifyContent: "center",
+            }}
+          >
+            {apps.map((app) => (
+              <Link
+                key={app.id}
+                href={`/apps/${app.id}?agent=${agentId}`}
                 style={{
-                  width: 60,
-                  height: 60,
-                  borderRadius: 14,
-                  background: "linear-gradient(135deg, var(--card-bg) 0%, var(--hover-bg, var(--card-bg)) 100%)",
-                  border: "1px solid var(--border)",
                   display: "flex",
+                  flexDirection: "column",
                   alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "1.75rem",
+                  gap: "0.375rem",
+                  textDecoration: "none",
+                  color: "var(--fg)",
                 }}
               >
-                {app.emoji}
-              </div>
-              <span
-                style={{
-                  fontSize: "0.6875rem",
-                  textAlign: "center",
-                  lineHeight: 1.2,
-                  maxWidth: 76,
-                  overflow: "hidden",
-                  display: "-webkit-box",
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: "vertical",
-                }}
-              >
-                {app.name}
-              </span>
-            </Link>
-          ))}
-        </div>
+                <div
+                  style={{
+                    width: 60,
+                    height: 60,
+                    borderRadius: 14,
+                    background: "linear-gradient(135deg, var(--card-bg) 0%, var(--hover-bg, var(--card-bg)) 100%)",
+                    border: "1px solid var(--border)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "1.75rem",
+                  }}
+                >
+                  {app.emoji}
+                </div>
+                <span
+                  style={{
+                    fontSize: "0.6875rem",
+                    textAlign: "center",
+                    lineHeight: 1.2,
+                    maxWidth: 76,
+                    overflow: "hidden",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                  }}
+                >
+                  {app.name}
+                </span>
+              </Link>
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );

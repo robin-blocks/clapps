@@ -1,10 +1,11 @@
 import { kv } from "@vercel/kv";
-import type { IntentMessage, ClappState } from "@clapps/core";
+import type { IntentMessage, ClappState, AppEntry } from "@clapps/core";
 
 const INTENT_QUEUE_KEY = (agentId: string, clappId: string) =>
   `intents:${agentId}:${clappId}`;
 const STATE_KEY = (agentId: string, clappId: string) =>
   `state:${agentId}:${clappId}`;
+const APPS_KEY = (agentId: string) => `apps:${agentId}`;
 const AGENT_KEY = (agentId: string) => `agent:${agentId}`;
 
 // --- Intents ---
@@ -76,6 +77,23 @@ export async function getState(
   clappId: string,
 ): Promise<ClappState | null> {
   const raw = await kv.get<string>(STATE_KEY(agentId, clappId));
+  if (!raw) return null;
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+// --- Apps ---
+
+/** Store registered apps for an agent */
+export async function setApps(
+  agentId: string,
+  apps: AppEntry[],
+): Promise<void> {
+  await kv.set(APPS_KEY(agentId), JSON.stringify(apps));
+}
+
+/** Get registered apps for an agent */
+export async function getApps(agentId: string): Promise<AppEntry[] | null> {
+  const raw = await kv.get<string>(APPS_KEY(agentId));
   if (!raw) return null;
   return typeof raw === "string" ? JSON.parse(raw) : raw;
 }

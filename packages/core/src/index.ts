@@ -14,8 +14,12 @@ export { parseAppMd } from "./parser/app-parser.js";
 export {
   IntentMessageSchema,
   StateUpdateSchema,
+  AppEntrySchema,
+  AppsUpdateSchema,
   type IntentMessage,
   type StateUpdate,
+  type AppEntry,
+  type AppsUpdate,
 } from "./intent/schemas.js";
 
 export { getByPath, setByPath } from "./state/paths.js";
