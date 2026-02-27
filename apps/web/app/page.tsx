@@ -27,8 +27,20 @@ export default function Home() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) setAgentId(stored);
+    // Priority: URL param → localStorage → prompt
+    const url = new URL(window.location.href);
+    const fromUrl = url.searchParams.get("agentId");
+    if (fromUrl) {
+      const val = fromUrl.trim().toLowerCase();
+      localStorage.setItem(STORAGE_KEY, val);
+      setAgentId(val);
+      // Clean the URL so it doesn't stick around
+      url.searchParams.delete("agentId");
+      window.history.replaceState({}, "", url.pathname);
+    } else {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) setAgentId(stored);
+    }
     setLoaded(true);
   }, []);
 
