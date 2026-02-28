@@ -13,6 +13,7 @@ export default function Home() {
   const [sessionToken, setSessionToken] = useState<string | undefined>(undefined);
   const [input, setInput] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [hasLink, setHasLink] = useState(false);
   const [activeApp, setActiveApp] = useState<string | null>(null);
 
   useEffect(() => {
@@ -28,6 +29,9 @@ export default function Home() {
     }
 
     // Link token from URL — store and exchange for session
+    const storedLink = localStorage.getItem(LINK_STORAGE_KEY);
+    if (linkFromUrl || storedLink) setHasLink(true);
+
     if (linkFromUrl) {
       localStorage.setItem(LINK_STORAGE_KEY, linkFromUrl);
       const storedSession = localStorage.getItem(SESSION_STORAGE_KEY);
@@ -90,6 +94,7 @@ export default function Home() {
     localStorage.removeItem(LINK_STORAGE_KEY);
     setAgentId(null);
     setSessionToken(undefined);
+    setHasLink(false);
     setActiveApp(null);
     setInput("");
   }
@@ -148,6 +153,37 @@ export default function Home() {
             Connect
           </button>
         </form>
+      </div>
+    );
+  }
+
+  if (!sessionToken && !hasLink) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100vh",
+          gap: "1rem",
+          padding: "2rem",
+          textAlign: "center",
+        }}
+      >
+        <h1 style={{ fontSize: "1.5rem", fontWeight: 700, letterSpacing: "-0.03em" }}>
+          Access required
+        </h1>
+        <p style={{ color: "var(--muted)", maxWidth: "40ch", fontSize: "0.875rem" }}>
+          This agent requires an access link. Use the URL provided by your agent&apos;s connector.
+        </p>
+        <button
+          onClick={clearAgentId}
+          className="clapp-btn clapp-btn-md"
+          style={{ marginTop: "0.5rem" }}
+        >
+          Back
+        </button>
       </div>
     );
   }
