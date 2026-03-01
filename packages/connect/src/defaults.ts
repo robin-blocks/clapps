@@ -9,6 +9,20 @@ interface AppEntry {
   pinned?: boolean;
 }
 
+const DEFAULT_CHAT_APP_MD = `---
+name: Chat
+domain: default
+---
+
+## Modules
+- default/chat
+
+## Layout
+\`\`\`clapp-layout
+Module(ref=default/chat):
+\`\`\`
+`;
+
 const DEFAULT_CHAT_VIEW = `---
 name: Chat
 domain: default
@@ -35,7 +49,7 @@ Column(gap=4):
 | chat.send | \`{ text: string }\` | Send a chat message |
 `;
 
-const DEFAULT_CHAT_APP: AppEntry = {
+const DEFAULT_CHAT_APP_ENTRY: AppEntry = {
   id: "chat",
   name: "Chat",
   emoji: "\u{1F4AC}",
@@ -44,8 +58,15 @@ const DEFAULT_CHAT_APP: AppEntry = {
 };
 
 export function seedDefaults(viewsDir: string, stateDir: string): void {
-  // Seed chat.view.md if missing
-  const viewPath = resolve(viewsDir, "chat.view.md");
+  // Seed chat.app.md (app definition) if missing
+  const appPath = resolve(viewsDir, "chat.app.md");
+  if (!existsSync(appPath)) {
+    writeFileSync(appPath, DEFAULT_CHAT_APP_MD, "utf-8");
+    console.log(`📝 Created default chat app: ${appPath}`);
+  }
+
+  // Seed default.chat.view.md (view module) if missing
+  const viewPath = resolve(viewsDir, "default.chat.view.md");
   if (!existsSync(viewPath)) {
     writeFileSync(viewPath, DEFAULT_CHAT_VIEW, "utf-8");
     console.log(`📝 Created default chat view: ${viewPath}`);
@@ -54,14 +75,14 @@ export function seedDefaults(viewsDir: string, stateDir: string): void {
   // Seed or merge _apps.json
   const appsPath = resolve(stateDir, "_apps.json");
   if (!existsSync(appsPath)) {
-    writeFileSync(appsPath, JSON.stringify([DEFAULT_CHAT_APP], null, 2), "utf-8");
+    writeFileSync(appsPath, JSON.stringify([DEFAULT_CHAT_APP_ENTRY], null, 2), "utf-8");
     console.log(`📝 Created default apps registry: ${appsPath}`);
   } else {
     try {
       const existing: AppEntry[] = JSON.parse(readFileSync(appsPath, "utf-8"));
       const hasChatEntry = existing.some((app) => app.id === "chat");
       if (!hasChatEntry) {
-        existing.push(DEFAULT_CHAT_APP);
+        existing.push(DEFAULT_CHAT_APP_ENTRY);
         writeFileSync(appsPath, JSON.stringify(existing, null, 2), "utf-8");
         console.log(`📝 Added chat app to existing apps registry`);
       }
