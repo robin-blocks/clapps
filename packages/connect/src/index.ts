@@ -96,9 +96,6 @@ async function main() {
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(viewsDir, { recursive: true });
 
-  // Seed default clapp files (chat UI, apps registry)
-  seedDefaults(viewsDir, stateDir);
-
   const agentClient = new AgentClient({ agentUrl, agentToken });
 
   const intentPoller = new IntentPoller({
@@ -149,6 +146,9 @@ async function main() {
 
   intentPoller.start();
   stateWatcher.start();
+
+  // Seed default clapp files after watchers are running so they detect the writes
+  seedDefaults(viewsDir, stateDir);
 
   // Graceful shutdown
   process.on("SIGINT", async () => {
