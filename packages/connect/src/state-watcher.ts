@@ -41,6 +41,23 @@ export class StateWatcher {
     }
   }
 
+  /** Resolves when chokidar has finished its initial scan and filesystem watchers are active */
+  waitReady(): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.viewsWatcher) {
+        this.stateWatcher?.on("ready", () => resolve());
+        return;
+      }
+      let readyCount = 0;
+      const onReady = () => {
+        readyCount++;
+        if (readyCount >= 2) resolve();
+      };
+      this.stateWatcher?.on("ready", onReady);
+      this.viewsWatcher.on("ready", onReady);
+    });
+  }
+
   async stop(): Promise<void> {
     await this.stateWatcher?.close();
     await this.viewsWatcher?.close();

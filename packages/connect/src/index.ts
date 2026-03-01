@@ -147,7 +147,8 @@ async function main() {
   intentPoller.start();
   stateWatcher.start();
 
-  // Seed default clapp files after watchers are running so they detect the writes
+  // Wait for chokidar to finish initial scan, then seed defaults so writes are detected
+  await stateWatcher.waitReady();
   seedDefaults(viewsDir, stateDir);
 
   // Graceful shutdown
