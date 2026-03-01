@@ -187,6 +187,12 @@ interface AgentRecord {
   createdAt: string;
 }
 
+/** Check if an agent is already registered */
+export async function agentExists(agentId: string): Promise<boolean> {
+  const raw = await kv.get<string>(AGENT_KEY(agentId));
+  return raw !== null;
+}
+
 /** Register a new agent (or overwrite existing) */
 export async function registerAgent(
   agentId: string,

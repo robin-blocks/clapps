@@ -6,6 +6,7 @@ import { mkdirSync } from "node:fs";
 import { AgentClient } from "./agent-client.js";
 import { IntentPoller } from "./intent-poller.js";
 import { StateWatcher } from "./state-watcher.js";
+import { loadToken, saveToken, CREDENTIALS_PATH } from "./credentials.js";
 
 function parseArgs(args: string[]) {
   const opts: Record<string, string> = {};
@@ -18,10 +19,57 @@ function parseArgs(args: string[]) {
   return opts;
 }
 
+async function selfRegister(
+  relayUrl: string,
+  agentId: string,
+): Promise<string> {
+  const res = await fetch(`${relayUrl}/api/agent/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agentId }),
+  });
+
+  if (res.status === 409) {
+    console.error(
+      `❌ Agent ID "${agentId}" is already registered. If this is your agent, use --token YOUR_TOKEN`,
+    );
+    process.exit(1);
+  }
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Registration failed (${res.status}): ${body}`);
+  }
+
+  const { token } = (await res.json()) as { agentId: string; token: string };
+  return token;
+}
+
+async function resolveToken(
+  relayUrl: string,
+  agentId: string,
+  explicitToken: string | undefined,
+): Promise<string> {
+  // 1. Explicit --token flag wins
+  if (explicitToken) return explicitToken;
+
+  // 2. Try saved credentials
+  const saved = loadToken(relayUrl, agentId);
+  if (saved) return saved;
+
+  // 3. Self-register
+  const token = await selfRegister(relayUrl, agentId);
+  saveToken(relayUrl, agentId, token);
+  console.log(
+    `✅ Registered agent "${agentId}" (token saved to ${CREDENTIALS_PATH})`,
+  );
+  return token;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const relayUrl = opts.relay ?? "https://clapps.clawlab.app";
-  const token = opts.token;
+  const explicitToken = opts.token;
   const agentId = opts["agent-id"];
   const agentUrl = opts.agent ?? "http://localhost:18789";
   const agentToken = opts["agent-token"];
@@ -32,10 +80,16 @@ async function main() {
     opts["views-dir"] ??
     resolve(homedir(), ".openclaw", "workspace", "ui", "views");
 
-  if (!token || !agentId) {
-    console.error("Usage: clapps-connect --token YOUR_TOKEN --agent-id AGENT_ID [--relay URL] [--agent URL] [--agent-token TOKEN] [--views-dir PATH]");
+  if (!agentId) {
+    console.error(
+      "Usage: clapps-connect --agent-id AGENT_ID [--token TOKEN] [--relay URL] [--agent URL] [--agent-token TOKEN] [--views-dir PATH]",
+    );
     process.exit(1);
   }
+
+  console.log(`🔗 Connecting to relay: ${relayUrl}`);
+
+  const token = await resolveToken(relayUrl, agentId, explicitToken);
 
   // Ensure directories exist
   mkdirSync(stateDir, { recursive: true });
@@ -60,9 +114,7 @@ async function main() {
     onError: (err) => console.error("[state-watcher]", err.message),
   });
 
-  console.log(`🔗 Connecting to relay: ${relayUrl}`);
-  console.log(`🤖 Agent at: ${agentUrl}`);
-  console.log(`👤 Agent ID: ${agentId}`);
+  console.log(`🤖 Agent ID: ${agentId}`);
   console.log(`📁 Watching state: ${stateDir}`);
   console.log(`📄 Watching views: ${viewsDir}`);
 
