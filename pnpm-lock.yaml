@@ -60,12 +60,13 @@ importers:
 
   packages/connect:
     dependencies:
-      '@clapps/core':
-        specifier: workspace:*
-        version: link:../core
       chokidar:
         specifier: ^4.0.3
         version: 4.0.3
+    devDependencies:
+      '@clapps/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/core:
     dependencies:
