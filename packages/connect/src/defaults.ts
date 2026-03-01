@@ -24,7 +24,7 @@ Module(ref=default/chat):
 `;
 
 const DEFAULT_CHAT_VIEW = `---
-name: Chat
+name: chat
 domain: default
 version: 0.1.0
 ---
