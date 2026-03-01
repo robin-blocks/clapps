@@ -7,6 +7,7 @@ import { AgentClient } from "./agent-client.js";
 import { IntentPoller } from "./intent-poller.js";
 import { StateWatcher } from "./state-watcher.js";
 import { loadToken, saveToken, CREDENTIALS_PATH } from "./credentials.js";
+import { seedDefaults } from "./defaults.js";
 
 function parseArgs(args: string[]) {
   const opts: Record<string, string> = {};
@@ -94,6 +95,9 @@ async function main() {
   // Ensure directories exist
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(viewsDir, { recursive: true });
+
+  // Seed default clapp files (chat UI, apps registry)
+  seedDefaults(viewsDir, stateDir);
 
   const agentClient = new AgentClient({ agentUrl, agentToken });
 

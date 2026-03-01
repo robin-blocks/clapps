@@ -9,3 +9,5 @@ export { Conditional } from "./Conditional.js";
 export { Skeleton } from "./Skeleton.js";
 export { MarkdownContent } from "./MarkdownContent.js";
 export { Card } from "./Card.js";
+export { TextInput } from "./TextInput.js";
+export { IntentForm } from "./IntentForm.js";

@@ -12,6 +12,8 @@ import {
   Skeleton,
   MarkdownContent,
   Card,
+  TextInput,
+  IntentForm,
 } from "./primitives/index.js";
 
 /** Map component names from the DSL to React components */
@@ -27,6 +29,8 @@ const componentMap: Record<string, ComponentType<any>> = {
   Skeleton,
   MarkdownContent,
   Card,
+  TextInput,
+  IntentForm,
 };
 
 interface LayoutNodeRendererProps {
