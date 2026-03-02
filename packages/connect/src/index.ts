@@ -85,6 +85,10 @@ async function main() {
     store,
     staticDir,
     agentConnected: () => agentStarted,
+    onConnect: () => {
+      // Refresh settings state when a client connects (catches external changes)
+      settingsHandler.refreshSettingsState();
+    },
     onIntent: (intent, _context) => {
       // Let settings handler intercept first
       if (settingsHandler.handleIntent(intent)) return;
@@ -95,12 +99,18 @@ async function main() {
     },
   });
 
+  // 8. Periodic refresh to detect external config changes (every 10s)
+  const refreshInterval = setInterval(() => {
+    settingsHandler.refreshSettingsState();
+  }, 10_000);
+
   console.log(`📁 State dir: ${stateDir}`);
   console.log(`📄 Views dir: ${viewsDir}`);
 
   // Graceful shutdown
   process.on("SIGINT", () => {
     console.log("\nShutting down...");
+    clearInterval(refreshInterval);
     server.close();
     agentClient.stop();
     process.exit(0);

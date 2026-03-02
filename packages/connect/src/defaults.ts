@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync } from "node:fs";
+import { resolve, dirname } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 interface AppEntry {
   id: string;
@@ -9,6 +10,8 @@ interface AppEntry {
   description: string;
   pinned?: boolean;
 }
+
+// === Bundled defaults (fallback if user hasn't customized) ===
 
 const DEFAULT_CHAT_APP_MD = `---
 name: Chat
@@ -50,14 +53,6 @@ Column(gap=4):
 | chat.send | \`{ text: string }\` | Send a chat message |
 `;
 
-const DEFAULT_CHAT_APP_ENTRY: AppEntry = {
-  id: "chat",
-  name: "Chat",
-  emoji: "\u{1F4AC}",
-  description: "Chat with the agent",
-  pinned: true,
-};
-
 const DEFAULT_SETTINGS_APP_MD = `---
 name: Settings
 domain: default
@@ -75,74 +70,78 @@ Module(ref=default/settings):
 const DEFAULT_SETTINGS_VIEW = `---
 name: settings
 domain: default
-version: 0.3.0
+version: 0.6.0
 ---
 
 ## State Bindings
 - \`active.isConfigured\` -> boolean
-- \`active.description\` -> string
-- \`providers.anthropic.apiKey.configured\` -> boolean
-- \`providers.anthropic.apiKey.maskedKey\` -> string
-- \`providers.anthropic.subscription.configured\` -> boolean
-- \`providers.anthropic.subscription.instructions\` -> string
+- \`active.model\` -> string
+- \`configuredProviders\` -> array
+- \`sessions.sessions\` -> array
+- \`sessions.globalModel\` -> string
 
 ## Layout
 \`\`\`clapp-layout
-Column(gap=4):
-  Heading(level=2): "Settings"
-  Card(title=Authentication Status):
-    Column(gap=2):
+Column(gap=5):
+  Card(title=AI Providers):
+    Column(gap=4):
       Conditional(when=active.isConfigured):
-        MarkdownContent(source=active.description):
+        ProviderList(data=configuredProviders):
       Conditional(when=!active.isConfigured):
-        Heading(level=4): "No authentication configured"
-  Card(title=Anthropic API Key):
-    Column(gap=3):
-      Conditional(when=providers.anthropic.apiKey.configured):
-        Heading(level=4): "Configured"
-      Conditional(when=!providers.anthropic.apiKey.configured):
-        Heading(level=4): "Not configured"
-      IntentForm(intent=settings.setAnthropicKey, submitLabel=Save Key):
-        TextInput(name=apiKey, type=password, placeholder=sk-ant-...):
-  Card(title=Claude Subscription):
-    Column(gap=3):
-      Conditional(when=providers.anthropic.subscription.configured):
-        Heading(level=4): "Configured"
-      Conditional(when=!providers.anthropic.subscription.configured):
-        Heading(level=4): "Not configured"
-      MarkdownContent(source=providers.anthropic.subscription.instructions):
-      IntentForm(intent=settings.setClaudeToken, submitLabel=Save Token):
-        TextInput(name=token, type=password, placeholder=Paste setup-token here...):
+        Heading(level=4): "No providers configured"
+      SessionList():
 \`\`\`
 
 ## Intents
 | Name | Payload | Description |
 |------|---------|-------------|
-| settings.setAnthropicKey | \`{ apiKey: string }\` | Set the Anthropic API key |
-| settings.setClaudeToken | \`{ token: string }\` | Set Claude subscription setup-token |
+| settings.setAnthropicKey | \`{ apiKey: string, customName?: string }\` | Set an Anthropic API key |
+| settings.setClaudeToken | \`{ setupToken: string, customName?: string }\` | Set a Claude subscription token |
+| settings.setOpenAIKey | \`{ apiKey: string, customName?: string }\` | Set an OpenAI API key |
+| settings.setKimiCodingKey | \`{ apiKey: string, customName?: string }\` | Set a Kimi Coding API key |
+| settings.setActiveProvider | \`{ provider: string }\` | Set the active AI provider |
+| settings.setActiveModel | \`{ model: string }\` | Set the active AI model |
+| settings.deleteProvider | \`{ profileId: string }\` | Delete a provider profile |
+| settings.listSessions | \`{}\` | Refresh the list of active sessions |
+| settings.resetSessionModel | \`{ sessionKey: string }\` | Reset a session to use the system default |
+| settings.applyDefaultToAll | \`{}\` | Apply system default to all sessions |
 `;
 
-const DEFAULT_SETTINGS_APP_ENTRY: AppEntry = {
-  id: "settings",
-  name: "Settings",
-  emoji: "\u2699\uFE0F",
-  description: "Configure your agent",
-  pinned: true,
-};
-
 const DEFAULT_APP_ENTRIES: AppEntry[] = [
-  DEFAULT_CHAT_APP_ENTRY,
-  DEFAULT_SETTINGS_APP_ENTRY,
+  {
+    id: "chat",
+    name: "Chat",
+    emoji: "\u{1F4AC}",
+    description: "Chat with the agent",
+    pinned: true,
+  },
+  {
+    id: "settings",
+    name: "Settings",
+    emoji: "\u2699\uFE0F",
+    description: "Configure your agent",
+    pinned: true,
+  },
 ];
 
-const DEFAULT_APPS: { appPath: string; viewPath: string; appMd: string; viewMd: string }[] = [
+interface ClappDef {
+  id: string;
+  appPath: string;
+  viewPath: string;
+  appMd: string;
+  viewMd: string;
+}
+
+const BUNDLED_CLAPPS: ClappDef[] = [
   {
+    id: "chat",
     appPath: "chat.app.md",
     viewPath: "default.chat.view.md",
     appMd: DEFAULT_CHAT_APP_MD,
     viewMd: DEFAULT_CHAT_VIEW,
   },
   {
+    id: "settings",
     appPath: "settings.app.md",
     viewPath: "default.settings.view.md",
     appMd: DEFAULT_SETTINGS_APP_MD,
@@ -150,17 +149,92 @@ const DEFAULT_APPS: { appPath: string; viewPath: string; appMd: string; viewMd: 
   },
 ];
 
-export function seedDefaults(viewsDir: string, stateDir: string): void {
-  // Seed app definitions and always overwrite default view modules
-  for (const { appPath, viewPath, appMd, viewMd } of DEFAULT_APPS) {
-    const fullAppPath = resolve(viewsDir, appPath);
-    if (!existsSync(fullAppPath)) {
-      writeFileSync(fullAppPath, appMd, "utf-8");
-      console.log(`📝 Created default app: ${fullAppPath}`);
+// === Clapp loading ===
+
+/** Get the user's clapps directory */
+export function getUserClappsDir(): string {
+  return resolve(homedir(), ".openclaw", "clapps");
+}
+
+/** Get the bundled clapps directory (shipped with package) */
+export function getBundledClappsDir(): string {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  return resolve(__dirname, "..", "..", "..", "clapps");
+}
+
+/** Load a view file, checking user dir first, then bundled, then fallback to embedded */
+function loadView(
+  clappId: string,
+  viewFile: string,
+  fallback: string
+): string {
+  const userPath = resolve(getUserClappsDir(), clappId, "views", viewFile);
+  if (existsSync(userPath)) {
+    try {
+      return readFileSync(userPath, "utf-8");
+    } catch {
+      // Fall through
+    }
+  }
+
+  const bundledPath = resolve(getBundledClappsDir(), clappId, "views", viewFile);
+  if (existsSync(bundledPath)) {
+    try {
+      return readFileSync(bundledPath, "utf-8");
+    } catch {
+      // Fall through
+    }
+  }
+
+  return fallback;
+}
+
+/** Install default clapps to user directory if not present */
+export function installDefaultClapps(): void {
+  const userClappsDir = getUserClappsDir();
+  const bundledClappsDir = getBundledClappsDir();
+
+  for (const clapp of BUNDLED_CLAPPS) {
+    const userClappDir = resolve(userClappsDir, clapp.id);
+    const bundledClappDir = resolve(bundledClappsDir, clapp.id);
+
+    // Skip if user already has this clapp
+    if (existsSync(userClappDir)) {
+      continue;
     }
 
-    const fullViewPath = resolve(viewsDir, viewPath);
-    writeFileSync(fullViewPath, viewMd, "utf-8");
+    // Copy from bundled if available
+    if (existsSync(bundledClappDir)) {
+      try {
+        mkdirSync(userClappDir, { recursive: true });
+        cpSync(bundledClappDir, userClappDir, { recursive: true });
+        console.log(`📦 Installed clapp: ${clapp.id} -> ${userClappDir}`);
+      } catch (err) {
+        console.warn(`⚠️  Failed to install clapp ${clapp.id}: ${err}`);
+      }
+    }
+  }
+}
+
+/** Seed default views and apps registry */
+export function seedDefaults(viewsDir: string, stateDir: string): void {
+  // Install clapps to user directory first
+  installDefaultClapps();
+
+  // Seed app definitions and view modules
+  for (const clapp of BUNDLED_CLAPPS) {
+    const fullAppPath = resolve(viewsDir, clapp.appPath);
+    const appContent = loadView(clapp.id, clapp.appPath.replace(".app.md", ".app.md"), clapp.appMd);
+    
+    if (!existsSync(fullAppPath)) {
+      writeFileSync(fullAppPath, appContent, "utf-8");
+      console.log(`📝 Created app: ${fullAppPath}`);
+    }
+
+    const fullViewPath = resolve(viewsDir, clapp.viewPath);
+    const viewFile = clapp.viewPath.replace("default.", "").replace(".view.md", ".view.md");
+    const viewContent = loadView(clapp.id, `default.${clapp.id}.view.md`, clapp.viewMd);
+    writeFileSync(fullViewPath, viewContent, "utf-8");
   }
 
   // Seed or merge _apps.json
@@ -188,42 +262,49 @@ export function seedDefaults(viewsDir: string, stateDir: string): void {
   }
 }
 
-/** Check if the agent has an AI provider API key configured and write _status.json */
-export function checkAuthStatus(stateDir: string, authPath?: string): void {
-  const defaultAuthPath = resolve(
+/** Check if the agent has an AI provider configured and write _status.json */
+export function checkAuthStatus(stateDir: string, authProfilesPath?: string): void {
+  const defaultAuthProfilesPath = resolve(
     homedir(),
     ".openclaw",
     "agents",
     "main",
     "agent",
-    "auth.json",
+    "auth-profiles.json",
   );
-  const targetPath = authPath ?? defaultAuthPath;
+  const targetPath = authProfilesPath ?? defaultAuthProfilesPath;
 
   let setupRequired = true;
   let message =
-    "Your agent needs an AI provider key to respond to messages. SSH into your server and run:\n" +
-    'openclaw config set agents.main.auth.anthropic.apiKey "sk-ant-..."';
+    "Your agent needs an AI provider key to respond to messages. Run:\n" +
+    "`openclaw models auth` to configure authentication.";
 
   try {
     if (existsSync(targetPath)) {
       const raw = readFileSync(targetPath, "utf-8");
-      const auth = JSON.parse(raw);
-      const hasKey = Object.values(auth).some((provider) => {
-        if (typeof provider === "object" && provider !== null) {
-          return Object.values(provider as Record<string, unknown>).some(
-            (v) => typeof v === "string" && v.length > 0,
+      const data = JSON.parse(raw);
+      
+      // Check if any profile has actual credentials
+      const profiles = data.profiles ?? data;
+      const hasCredentials = Object.values(profiles).some((profile: unknown) => {
+        if (typeof profile === "object" && profile !== null) {
+          const p = profile as Record<string, unknown>;
+          return (
+            (typeof p.token === "string" && p.token.length > 0) ||
+            (typeof p.key === "string" && p.key.length > 0) ||
+            (typeof p.access === "string" && p.access.length > 0)
           );
         }
-        return typeof provider === "string" && provider.length > 0;
+        return false;
       });
-      if (hasKey) {
+      
+      if (hasCredentials) {
         setupRequired = false;
         message = "";
       }
     }
   } catch {
-    // If we can't read auth.json, assume setup is required
+    // If we can't read auth-profiles.json, assume setup is required
   }
 
   const statusPath = resolve(stateDir, "_status.json");
@@ -237,6 +318,6 @@ export function checkAuthStatus(stateDir: string, authPath?: string): void {
     "utf-8",
   );
   if (setupRequired) {
-    console.warn("⚠️  No AI provider key configured — _status.json written with setupRequired: true");
+    console.warn("⚠️  No AI provider configured — _status.json written with setupRequired: true");
   }
 }

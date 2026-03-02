@@ -12,6 +12,7 @@ export interface ServerOptions {
   onIntent: (intent: IntentMessage, context?: ClientContext) => void;
   staticDir?: string; // path to built SPA files
   agentConnected?: () => boolean;
+  onConnect?: () => void; // called when a client connects (for state refresh)
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -27,7 +28,7 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export function startServer(options: ServerOptions): { close: () => void } {
-  const { port, store, onIntent, staticDir, agentConnected } = options;
+  const { port, store, onIntent, staticDir, agentConnected, onConnect } = options;
 
   const server = createServer((req, res) => {
     handleRequest(req, res, store, onIntent, staticDir, agentConnected);
@@ -37,6 +38,9 @@ export function startServer(options: ServerOptions): { close: () => void } {
 
   wss.on("connection", (ws: WebSocket) => {
     const client = store.addClient(ws);
+
+    // Notify that a client connected (for state refresh)
+    onConnect?.();
 
     ws.on("message", (raw) => {
       try {
