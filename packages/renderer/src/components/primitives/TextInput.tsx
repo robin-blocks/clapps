@@ -6,17 +6,18 @@ import { useFormContext } from "../../context/FormContext.js";
 interface TextInputProps {
   name: string;
   placeholder?: string;
+  type?: "text" | "password";
   children?: ReactNode;
 }
 
-export function TextInput({ name, placeholder }: TextInputProps) {
+export function TextInput({ name, placeholder, type = "text" }: TextInputProps) {
   const form = useFormContext();
 
   const value = form?.values.get(name) ?? "";
 
   return (
     <input
-      type="text"
+      type={type}
       className="clapp-input"
       name={name}
       placeholder={placeholder}

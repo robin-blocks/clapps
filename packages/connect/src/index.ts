@@ -8,6 +8,7 @@ import { IntentPoller } from "./intent-poller.js";
 import { StateWatcher } from "./state-watcher.js";
 import { loadToken, saveToken, CREDENTIALS_PATH } from "./credentials.js";
 import { seedDefaults, checkAuthStatus } from "./defaults.js";
+import { SettingsHandler } from "./settings-handler.js";
 
 function parseArgs(args: string[]) {
   const opts: Record<string, string> = {};
@@ -102,11 +103,14 @@ async function main() {
     onError: (err) => console.error("[acp]", err.message),
   });
 
+  const settingsHandler = new SettingsHandler({ stateDir });
+
   const intentPoller = new IntentPoller({
     relayUrl,
     token,
     agentId,
     agentClient,
+    onIntent: settingsHandler.handleIntent,
     onError: (err) => console.error("[intent-poller]", err.message),
   });
 
@@ -154,6 +158,7 @@ async function main() {
   await stateWatcher.waitReady();
   seedDefaults(viewsDir, stateDir);
   checkAuthStatus(stateDir);
+  settingsHandler.writeSettingsState();
 
   // Start ACP subprocess, then begin polling for intents
   try {

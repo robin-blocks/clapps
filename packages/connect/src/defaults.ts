@@ -58,38 +58,116 @@ const DEFAULT_CHAT_APP_ENTRY: AppEntry = {
   pinned: true,
 };
 
-export function seedDefaults(viewsDir: string, stateDir: string): void {
-  // Seed chat.app.md (app definition) if missing
-  const appPath = resolve(viewsDir, "chat.app.md");
-  if (!existsSync(appPath)) {
-    writeFileSync(appPath, DEFAULT_CHAT_APP_MD, "utf-8");
-    console.log(`📝 Created default chat app: ${appPath}`);
-  }
+const DEFAULT_SETTINGS_APP_MD = `---
+name: Settings
+domain: default
+---
 
-  // Seed default.chat.view.md (view module) if missing
-  const viewPath = resolve(viewsDir, "default.chat.view.md");
-  if (!existsSync(viewPath)) {
-    writeFileSync(viewPath, DEFAULT_CHAT_VIEW, "utf-8");
-    console.log(`📝 Created default chat view: ${viewPath}`);
+## Modules
+- default/settings
+
+## Layout
+\`\`\`clapp-layout
+Module(ref=default/settings):
+\`\`\`
+`;
+
+const DEFAULT_SETTINGS_VIEW = `---
+name: settings
+domain: default
+version: 0.1.0
+---
+
+## State Bindings
+- \`providers.anthropic.configured\` -> boolean
+- \`providers.anthropic.maskedKey\` -> string
+
+## Layout
+\`\`\`clapp-layout
+Column(gap=4):
+  Heading(level=2): "Settings"
+  Card(title=Anthropic API Key):
+    Column(gap=3):
+      Conditional(when=providers.anthropic.configured):
+        Heading(level=4): "Configured"
+      Conditional(when=!providers.anthropic.configured):
+        Heading(level=4): "Not configured"
+      IntentForm(intent=settings.setAnthropicKey, submitLabel=Save Key):
+        TextInput(name=apiKey, type=password, placeholder=sk-ant-...):
+\`\`\`
+
+## Intents
+| Name | Payload | Description |
+|------|---------|-------------|
+| settings.setAnthropicKey | \`{ apiKey: string }\` | Set the Anthropic API key |
+`;
+
+const DEFAULT_SETTINGS_APP_ENTRY: AppEntry = {
+  id: "settings",
+  name: "Settings",
+  emoji: "\u2699\uFE0F",
+  description: "Configure your agent",
+  pinned: true,
+};
+
+const DEFAULT_APP_ENTRIES: AppEntry[] = [
+  DEFAULT_CHAT_APP_ENTRY,
+  DEFAULT_SETTINGS_APP_ENTRY,
+];
+
+const DEFAULT_APPS: { appPath: string; viewPath: string; appMd: string; viewMd: string }[] = [
+  {
+    appPath: "chat.app.md",
+    viewPath: "default.chat.view.md",
+    appMd: DEFAULT_CHAT_APP_MD,
+    viewMd: DEFAULT_CHAT_VIEW,
+  },
+  {
+    appPath: "settings.app.md",
+    viewPath: "default.settings.view.md",
+    appMd: DEFAULT_SETTINGS_APP_MD,
+    viewMd: DEFAULT_SETTINGS_VIEW,
+  },
+];
+
+export function seedDefaults(viewsDir: string, stateDir: string): void {
+  // Seed app definitions and view modules
+  for (const { appPath, viewPath, appMd, viewMd } of DEFAULT_APPS) {
+    const fullAppPath = resolve(viewsDir, appPath);
+    if (!existsSync(fullAppPath)) {
+      writeFileSync(fullAppPath, appMd, "utf-8");
+      console.log(`📝 Created default app: ${fullAppPath}`);
+    }
+
+    const fullViewPath = resolve(viewsDir, viewPath);
+    if (!existsSync(fullViewPath)) {
+      writeFileSync(fullViewPath, viewMd, "utf-8");
+      console.log(`📝 Created default view: ${fullViewPath}`);
+    }
   }
 
   // Seed or merge _apps.json
   const appsPath = resolve(stateDir, "_apps.json");
   if (!existsSync(appsPath)) {
-    writeFileSync(appsPath, JSON.stringify([DEFAULT_CHAT_APP_ENTRY], null, 2), "utf-8");
+    writeFileSync(appsPath, JSON.stringify(DEFAULT_APP_ENTRIES, null, 2), "utf-8");
     console.log(`📝 Created default apps registry: ${appsPath}`);
   } else {
     try {
       const existing: AppEntry[] = JSON.parse(readFileSync(appsPath, "utf-8"));
-      const hasChatEntry = existing.some((app) => app.id === "chat");
-      if (!hasChatEntry) {
-        existing.push(DEFAULT_CHAT_APP_ENTRY);
+      let changed = false;
+      for (const entry of DEFAULT_APP_ENTRIES) {
+        if (!existing.some((app) => app.id === entry.id)) {
+          existing.push(entry);
+          changed = true;
+          console.log(`📝 Added ${entry.id} app to existing apps registry`);
+        }
+      }
+      if (changed) {
         writeFileSync(appsPath, JSON.stringify(existing, null, 2), "utf-8");
-        console.log(`📝 Added chat app to existing apps registry`);
       }
     } catch {
       // If _apps.json is malformed, don't overwrite — let the user fix it
-      console.warn(`⚠️  Could not parse ${appsPath}, skipping chat app seeding`);
+      console.warn(`⚠️  Could not parse ${appsPath}, skipping app seeding`);
     }
   }
 }

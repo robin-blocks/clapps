@@ -7,6 +7,7 @@ export interface IntentPollerOptions {
   agentId: string;
   agentClient: AgentClient;
   intervalMs?: number;
+  onIntent?: (intent: IntentMessage) => boolean;
   onError?: (error: Error) => void;
 }
 
@@ -52,6 +53,8 @@ export class IntentPoller {
       for (const intent of data.intents) {
         this.lastSeen = intent.id;
         try {
+          // Let onIntent handle it locally; skip ACP if it returns true
+          if (this.options.onIntent?.(intent)) continue;
           await this.options.agentClient.sendIntent(intent);
         } catch (err) {
           this.options.onError?.(err as Error);
