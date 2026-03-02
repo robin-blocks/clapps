@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { homedir } from "node:os";
 
 interface AppEntry {
   id: string;
@@ -90,5 +91,55 @@ export function seedDefaults(viewsDir: string, stateDir: string): void {
       // If _apps.json is malformed, don't overwrite — let the user fix it
       console.warn(`⚠️  Could not parse ${appsPath}, skipping chat app seeding`);
     }
+  }
+}
+
+/** Check if the agent has an AI provider API key configured and write _status.json */
+export function checkAuthStatus(stateDir: string, authPath?: string): void {
+  const defaultAuthPath = resolve(
+    homedir(),
+    ".openclaw",
+    "agents",
+    "main",
+    "agent",
+    "auth.json",
+  );
+  const targetPath = authPath ?? defaultAuthPath;
+
+  let setupRequired = true;
+  let message =
+    "Your agent needs an AI provider key to respond to messages. SSH into your server and run:\n" +
+    'openclaw config set agents.main.auth.anthropic.apiKey "sk-ant-..."';
+
+  try {
+    if (existsSync(targetPath)) {
+      const raw = readFileSync(targetPath, "utf-8");
+      const auth = JSON.parse(raw);
+      // Check if there's any non-empty key value in the auth config
+      const hasKey = Object.values(auth).some((provider) => {
+        if (typeof provider === "object" && provider !== null) {
+          return Object.values(provider as Record<string, unknown>).some(
+            (v) => typeof v === "string" && v.length > 0,
+          );
+        }
+        return typeof provider === "string" && provider.length > 0;
+      });
+      if (hasKey) {
+        setupRequired = false;
+        message = "";
+      }
+    }
+  } catch {
+    // If we can't read auth.json, assume setup is required
+  }
+
+  const statusPath = resolve(stateDir, "_status.json");
+  writeFileSync(
+    statusPath,
+    JSON.stringify({ setupRequired, message }, null, 2),
+    "utf-8",
+  );
+  if (setupRequired) {
+    console.warn("⚠️  No AI provider key configured — _status.json written with setupRequired: true");
   }
 }

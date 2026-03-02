@@ -7,7 +7,7 @@ import { AgentClient } from "./agent-client.js";
 import { IntentPoller } from "./intent-poller.js";
 import { StateWatcher } from "./state-watcher.js";
 import { loadToken, saveToken, CREDENTIALS_PATH } from "./credentials.js";
-import { seedDefaults } from "./defaults.js";
+import { seedDefaults, checkAuthStatus } from "./defaults.js";
 
 function parseArgs(args: string[]) {
   const opts: Record<string, string> = {};
@@ -72,8 +72,8 @@ async function main() {
   const relayUrl = opts.relay ?? "https://clapps.clawlab.app";
   const explicitToken = opts.token;
   const agentId = opts["agent-id"];
-  const agentUrl = opts.agent ?? "http://localhost:18789";
   const agentToken = opts["agent-token"];
+  const session = opts.session ?? "agent:main:main";
   const stateDir =
     opts["state-dir"] ??
     resolve(homedir(), ".openclaw", "workspace", "ui", "state");
@@ -83,7 +83,7 @@ async function main() {
 
   if (!agentId) {
     console.error(
-      "Usage: clapps-connect --agent-id AGENT_ID [--token TOKEN] [--relay URL] [--agent URL] [--agent-token TOKEN] [--views-dir PATH]",
+      "Usage: clapps-connect --agent-id AGENT_ID [--token TOKEN] [--relay URL] [--agent-token TOKEN] [--session SESSION] [--views-dir PATH]",
     );
     process.exit(1);
   }
@@ -96,7 +96,11 @@ async function main() {
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(viewsDir, { recursive: true });
 
-  const agentClient = new AgentClient({ agentUrl, agentToken });
+  const agentClient = new AgentClient({
+    session,
+    agentToken,
+    onError: (err) => console.error("[acp]", err.message),
+  });
 
   const intentPoller = new IntentPoller({
     relayUrl,
@@ -144,17 +148,22 @@ async function main() {
     );
   }
 
+  // Start ACP subprocess before accepting intents
+  await agentClient.start();
+
   intentPoller.start();
   stateWatcher.start();
 
   // Wait for chokidar to finish initial scan, then seed defaults so writes are detected
   await stateWatcher.waitReady();
   seedDefaults(viewsDir, stateDir);
+  checkAuthStatus(stateDir);
 
   // Graceful shutdown
   process.on("SIGINT", async () => {
     console.log("\nShutting down...");
     intentPoller.stop();
+    agentClient.stop();
     await stateWatcher.stop();
     process.exit(0);
   });
