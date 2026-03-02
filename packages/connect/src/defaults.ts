@@ -76,7 +76,7 @@ Module(ref=default/settings):
 const DEFAULT_SETTINGS_VIEW = `---
 name: settings
 domain: default
-version: 0.2.0
+version: 0.3.0
 ---
 
 ## State Bindings
@@ -85,6 +85,7 @@ version: 0.2.0
 - \`providers.anthropic.apiKey.configured\` -> boolean
 - \`providers.anthropic.apiKey.maskedKey\` -> string
 - \`providers.anthropic.subscription.configured\` -> boolean
+- \`providers.anthropic.subscription.instructions\` -> string
 
 ## Layout
 \`\`\`clapp-layout
@@ -110,6 +111,7 @@ Column(gap=4):
         Heading(level=4): "Configured"
       Conditional(when=!providers.anthropic.subscription.configured):
         Heading(level=4): "Not configured"
+      MarkdownContent(source=providers.anthropic.subscription.instructions):
       IntentForm(intent=settings.setClaudeToken, submitLabel=Save Token):
         TextInput(name=token, type=password, placeholder=Paste setup-token here...):
 \`\`\`

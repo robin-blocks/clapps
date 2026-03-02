@@ -161,7 +161,10 @@ export class SettingsHandler {
             providers: {
               anthropic: {
                 apiKey: { configured: apiKeyConfigured, maskedKey },
-                subscription: { configured: subscriptionConfigured },
+                subscription: {
+                  configured: subscriptionConfigured,
+                  instructions: "Run `claude setup-token` on your server, then paste the output here.",
+                },
               },
             },
           },
