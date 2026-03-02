@@ -92,8 +92,8 @@ export function HomeScreen({ agentId, sessionToken, onOpenApp }: HomeScreenProps
           sessionToken,
         );
         if (!res.ok) return;
-        const data = (await res.json()) as StatusInfo;
-        if (!cancelled) setStatus(data);
+        const data = (await res.json()) as { state?: StatusInfo };
+        if (!cancelled && data.state) setStatus(data.state);
       } catch {
         // ignore — status is optional
       }

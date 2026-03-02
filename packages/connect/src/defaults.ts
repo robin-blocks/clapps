@@ -136,7 +136,11 @@ export function checkAuthStatus(stateDir: string, authPath?: string): void {
   const statusPath = resolve(stateDir, "_status.json");
   writeFileSync(
     statusPath,
-    JSON.stringify({ setupRequired, message }, null, 2),
+    JSON.stringify({
+      version: Date.now(),
+      timestamp: new Date().toISOString(),
+      state: { setupRequired, message },
+    }, null, 2),
     "utf-8",
   );
   if (setupRequired) {

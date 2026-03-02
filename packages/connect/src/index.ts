@@ -148,16 +148,22 @@ async function main() {
     );
   }
 
-  // Start ACP subprocess before accepting intents
-  await agentClient.start();
-
-  intentPoller.start();
   stateWatcher.start();
 
   // Wait for chokidar to finish initial scan, then seed defaults so writes are detected
   await stateWatcher.waitReady();
   seedDefaults(viewsDir, stateDir);
   checkAuthStatus(stateDir);
+
+  // Start ACP subprocess, then begin polling for intents
+  try {
+    await agentClient.start();
+  } catch (err) {
+    console.error(`⚠️  ACP failed to start: ${err instanceof Error ? err.message : err}`);
+    console.error("   Intent processing will not work until ACP is available.");
+  }
+
+  intentPoller.start();
 
   // Graceful shutdown
   process.on("SIGINT", async () => {

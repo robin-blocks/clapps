@@ -98,7 +98,7 @@ export class AgentClient {
   private spawnProcess(): void {
     const args = ["acp", "--session", this.session];
     if (this.agentToken) {
-      args.push("--gateway-token", this.agentToken);
+      args.push("--token", this.agentToken);
     }
 
     this.proc = spawn("openclaw", args, {
