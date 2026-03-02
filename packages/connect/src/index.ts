@@ -4,10 +4,11 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { AgentClient } from "./agent-client.js";
+import { AgentHandler } from "./agent-handler.js";
 import { IntentPoller } from "./intent-poller.js";
-import { StateWatcher } from "./state-watcher.js";
+import { RelayClient } from "./relay-client.js";
 import { loadToken, saveToken, CREDENTIALS_PATH } from "./credentials.js";
-import { seedDefaults, checkAuthStatus } from "./defaults.js";
+import { seedDefaults, checkAuthStatus, pushDefaults } from "./defaults.js";
 import { SettingsHandler } from "./settings-handler.js";
 
 function parseArgs(args: string[]) {
@@ -97,35 +98,22 @@ async function main() {
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(viewsDir, { recursive: true });
 
-  const agentClient = new AgentClient({
-    session,
-    agentToken,
-    onError: (err) => console.error("[acp]", err.message),
-  });
+  // 1. Create RelayClient
+  const relay = new RelayClient({ relayUrl, token, agentId });
 
-  const settingsHandler = new SettingsHandler({ stateDir });
+  // 2. Seed defaults to disk
+  seedDefaults(viewsDir, stateDir);
+  checkAuthStatus(stateDir);
 
-  const intentPoller = new IntentPoller({
-    relayUrl,
-    token,
-    agentId,
-    agentClient,
-    onIntent: settingsHandler.handleIntent,
-    onError: (err) => console.error("[intent-poller]", err.message),
-  });
+  const settingsHandler = new SettingsHandler({ stateDir, relay });
+  settingsHandler.writeSettingsState();
 
-  const stateWatcher = new StateWatcher({
-    stateDir,
-    viewsDir,
-    relayUrl,
-    token,
-    agentId,
-    onError: (err) => console.error("[state-watcher]", err.message),
-  });
+  // 3. Push everything to relay (retried, awaited)
+  await pushDefaults(relay, viewsDir, stateDir);
 
   console.log(`🤖 Agent ID: ${agentId}`);
-  console.log(`📁 Watching state: ${stateDir}`);
-  console.log(`📄 Watching views: ${viewsDir}`);
+  console.log(`📁 State dir: ${stateDir}`);
+  console.log(`📄 Views dir: ${viewsDir}`);
 
   // Create/reuse a stable link token for browser access
   try {
@@ -152,15 +140,13 @@ async function main() {
     );
   }
 
-  stateWatcher.start();
+  // 4. Start ACP subprocess
+  const agentClient = new AgentClient({
+    session,
+    agentToken,
+    onError: (err) => console.error("[acp]", err.message),
+  });
 
-  // Wait for chokidar to finish initial scan, then seed defaults so writes are detected
-  await stateWatcher.waitReady();
-  seedDefaults(viewsDir, stateDir);
-  checkAuthStatus(stateDir);
-  settingsHandler.writeSettingsState();
-
-  // Start ACP subprocess, then begin polling for intents
   try {
     await agentClient.start();
   } catch (err) {
@@ -168,14 +154,30 @@ async function main() {
     console.error("   Intent processing will not work until ACP is available.");
   }
 
+  // 5. Start polling for intents
+  const agentHandler = new AgentHandler({
+    agentClient,
+    relay,
+    stateDir,
+    viewsDir,
+  });
+
+  const intentPoller = new IntentPoller({
+    relayUrl,
+    token,
+    agentId,
+    agentHandler,
+    onIntent: settingsHandler.handleIntent,
+    onError: (err) => console.error("[intent-poller]", err.message),
+  });
+
   intentPoller.start();
 
   // Graceful shutdown
-  process.on("SIGINT", async () => {
+  process.on("SIGINT", () => {
     console.log("\nShutting down...");
     intentPoller.stop();
     agentClient.stop();
-    await stateWatcher.stop();
     process.exit(0);
   });
 }

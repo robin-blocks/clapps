@@ -3,18 +3,22 @@ import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { IntentMessage } from "@clapps/core";
 import { checkAuthStatus } from "./defaults.js";
+import type { RelayClient } from "./relay-client.js";
 
 export interface SettingsHandlerOptions {
   stateDir: string;
+  relay: RelayClient;
   authPath?: string;
 }
 
 export class SettingsHandler {
   private stateDir: string;
+  private relay: RelayClient;
   private authPath: string;
 
   constructor(options: SettingsHandlerOptions) {
     this.stateDir = options.stateDir;
+    this.relay = options.relay;
     this.authPath =
       options.authPath ??
       resolve(homedir(), ".openclaw", "agents", "main", "agent", "auth.json");
@@ -59,11 +63,17 @@ export class SettingsHandler {
     writeFileSync(this.authPath, JSON.stringify(auth, null, 2), "utf-8");
     console.log(`✅ Anthropic API key saved to ${this.authPath}`);
 
-    // Update settings state with masked key
+    // Update settings state with masked key and push directly
     this.writeSettingsState();
+    this.pushSettingsState().catch((err) =>
+      console.error(`[settings] Failed to push settings: ${(err as Error).message}`),
+    );
 
-    // Re-check auth status so _status.json reflects the new key
+    // Re-check auth status so _status.json reflects the new key, then push
     checkAuthStatus(this.stateDir, this.authPath);
+    this.pushStatusState().catch((err) =>
+      console.error(`[settings] Failed to push status: ${(err as Error).message}`),
+    );
   }
 
   /** Write settings.json state with provider status (masked keys) */
@@ -105,5 +115,19 @@ export class SettingsHandler {
       ),
       "utf-8",
     );
+  }
+
+  /** Push settings.json state to relay */
+  async pushSettingsState(): Promise<void> {
+    const statePath = resolve(this.stateDir, "settings.json");
+    const content = readFileSync(statePath, "utf-8");
+    await this.relay.pushState("settings", JSON.parse(content));
+  }
+
+  /** Push _status.json state to relay */
+  async pushStatusState(): Promise<void> {
+    const statePath = resolve(this.stateDir, "_status.json");
+    const content = readFileSync(statePath, "utf-8");
+    await this.relay.pushState("_status", JSON.parse(content));
   }
 }

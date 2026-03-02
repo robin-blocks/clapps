@@ -13,9 +13,6 @@
     "build": "tsc",
     "clean": "rm -rf dist"
   },
-  "dependencies": {
-    "chokidar": "^4.0.3"
-  },
   "devDependencies": {
     "@clapps/core": "workspace:*"
   }

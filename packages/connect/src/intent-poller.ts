@@ -1,11 +1,11 @@
 import type { IntentMessage } from "@clapps/core";
-import { AgentClient } from "./agent-client.js";
+import type { AgentHandler } from "./agent-handler.js";
 
 export interface IntentPollerOptions {
   relayUrl: string;
   token: string;
   agentId: string;
-  agentClient: AgentClient;
+  agentHandler: AgentHandler;
   intervalMs?: number;
   onIntent?: (intent: IntentMessage) => boolean;
   onError?: (error: Error) => void;
@@ -55,7 +55,7 @@ export class IntentPoller {
         try {
           // Let onIntent handle it locally; skip ACP if it returns true
           if (this.options.onIntent?.(intent)) continue;
-          await this.options.agentClient.sendIntent(intent);
+          await this.options.agentHandler.handleIntent(intent);
         } catch (err) {
           this.options.onError?.(err as Error);
         }

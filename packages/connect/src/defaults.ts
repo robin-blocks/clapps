@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
+import type { RelayClient } from "./relay-client.js";
 
 interface AppEntry {
   id: string;
@@ -170,6 +171,17 @@ export function seedDefaults(viewsDir: string, stateDir: string): void {
       console.warn(`⚠️  Could not parse ${appsPath}, skipping app seeding`);
     }
   }
+}
+
+/** Push all seeded files to the relay in one shot */
+export async function pushDefaults(
+  relay: RelayClient,
+  viewsDir: string,
+  stateDir: string,
+): Promise<void> {
+  console.log("Pushing defaults to relay...");
+  await relay.syncDir(stateDir, viewsDir);
+  console.log("Initial sync complete");
 }
 
 /** Check if the agent has an AI provider API key configured and write _status.json */
