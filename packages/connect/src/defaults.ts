@@ -76,31 +76,49 @@ Module(ref=default/settings):
 const DEFAULT_SETTINGS_VIEW = `---
 name: settings
 domain: default
-version: 0.1.0
+version: 0.2.0
 ---
 
 ## State Bindings
-- \`providers.anthropic.configured\` -> boolean
-- \`providers.anthropic.maskedKey\` -> string
+- \`active.isConfigured\` -> boolean
+- \`active.description\` -> string
+- \`providers.anthropic.apiKey.configured\` -> boolean
+- \`providers.anthropic.apiKey.maskedKey\` -> string
+- \`providers.anthropic.subscription.configured\` -> boolean
 
 ## Layout
 \`\`\`clapp-layout
 Column(gap=4):
   Heading(level=2): "Settings"
+  Card(title=Authentication Status):
+    Column(gap=2):
+      Conditional(when=active.isConfigured):
+        MarkdownContent(source=active.description):
+      Conditional(when=!active.isConfigured):
+        Heading(level=4): "No authentication configured"
   Card(title=Anthropic API Key):
     Column(gap=3):
-      Conditional(when=providers.anthropic.configured):
+      Conditional(when=providers.anthropic.apiKey.configured):
         Heading(level=4): "Configured"
-      Conditional(when=!providers.anthropic.configured):
+      Conditional(when=!providers.anthropic.apiKey.configured):
         Heading(level=4): "Not configured"
       IntentForm(intent=settings.setAnthropicKey, submitLabel=Save Key):
         TextInput(name=apiKey, type=password, placeholder=sk-ant-...):
+  Card(title=Claude Subscription):
+    Column(gap=3):
+      Conditional(when=providers.anthropic.subscription.configured):
+        Heading(level=4): "Configured"
+      Conditional(when=!providers.anthropic.subscription.configured):
+        Heading(level=4): "Not configured"
+      IntentForm(intent=settings.setClaudeToken, submitLabel=Save Token):
+        TextInput(name=token, type=password, placeholder=Paste setup-token here...):
 \`\`\`
 
 ## Intents
 | Name | Payload | Description |
 |------|---------|-------------|
 | settings.setAnthropicKey | \`{ apiKey: string }\` | Set the Anthropic API key |
+| settings.setClaudeToken | \`{ token: string }\` | Set Claude subscription setup-token |
 `;
 
 const DEFAULT_SETTINGS_APP_ENTRY: AppEntry = {
@@ -132,7 +150,7 @@ const DEFAULT_APPS: { appPath: string; viewPath: string; appMd: string; viewMd: 
 ];
 
 export function seedDefaults(viewsDir: string, stateDir: string): void {
-  // Seed app definitions and view modules
+  // Seed app definitions and always overwrite default view modules
   for (const { appPath, viewPath, appMd, viewMd } of DEFAULT_APPS) {
     const fullAppPath = resolve(viewsDir, appPath);
     if (!existsSync(fullAppPath)) {
@@ -141,10 +159,7 @@ export function seedDefaults(viewsDir: string, stateDir: string): void {
     }
 
     const fullViewPath = resolve(viewsDir, viewPath);
-    if (!existsSync(fullViewPath)) {
-      writeFileSync(fullViewPath, viewMd, "utf-8");
-      console.log(`📝 Created default view: ${fullViewPath}`);
-    }
+    writeFileSync(fullViewPath, viewMd, "utf-8");
   }
 
   // Seed or merge _apps.json
