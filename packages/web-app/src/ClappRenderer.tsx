@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useState, useCallback } from "react";
 import {
   ClappProvider,
@@ -10,38 +8,27 @@ import {
 import { useStore } from "zustand";
 import { parseAppMd, parseViewMd } from "@clapps/core";
 import type { AppSpec, ViewSpec } from "@clapps/core";
-import { relayFetch } from "@/lib/relay-fetch";
+import type { ClappTransport } from "@clapps/transport";
 
 interface ClappRendererProps {
   clappId: string;
-  agentId: string;
-  sessionToken?: string;
-  homeHref?: string;
+  transport: ClappTransport;
 }
 
-export function ClappRenderer({ clappId, agentId, sessionToken, homeHref }: ClappRendererProps) {
-  const relayUrl =
-    typeof window !== "undefined" ? window.location.origin : "";
+export function ClappRenderer({ clappId, transport }: ClappRendererProps) {
+  const serverUrl = window.location.origin;
 
   return (
-    <ClappProvider relayUrl={relayUrl} clappId={clappId} agentId={agentId} sessionToken={sessionToken}>
+    <ClappProvider serverUrl={serverUrl} clappId={clappId} transport={transport}>
       <div className="clapp-shell">
-        <ClappHeader clappId={clappId} agentId={agentId} homeHref={homeHref} />
-        <DynamicView clappId={clappId} agentId={agentId} sessionToken={sessionToken} />
+        <ClappHeader clappId={clappId} />
+        <DynamicView clappId={clappId} transport={transport} />
       </div>
     </ClappProvider>
   );
 }
 
-function ClappHeader({
-  clappId,
-  agentId,
-  homeHref,
-}: {
-  clappId: string;
-  agentId: string;
-  homeHref?: string;
-}) {
+function ClappHeader({ clappId }: { clappId: string }) {
   return (
     <header
       style={{
@@ -49,34 +36,14 @@ function ClappHeader({
         alignItems: "center",
         justifyContent: "space-between",
         padding: "0.75rem 1rem",
+        paddingLeft: "5.5rem", // leave space for back button
         borderBottom: "1px solid var(--border)",
         flexShrink: 0,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-        {homeHref && (
-          <a
-            href={homeHref}
-            style={{
-              color: "var(--accent)",
-              fontSize: "0.8125rem",
-              textDecoration: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.125rem",
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-              <path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            Home
-          </a>
-        )}
-        <span style={{ fontWeight: 600, fontSize: "0.875rem" }}>{clappId}</span>
-      </div>
+      <span style={{ fontWeight: 600, fontSize: "0.875rem" }}>{clappId}</span>
       <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
         <LoadingIndicator />
-        {agentId}
       </span>
     </header>
   );
@@ -85,7 +52,7 @@ function ClappHeader({
 function LoadingIndicator() {
   const loading = useClappLoading();
   if (!loading) return null;
-  return <span style={{ marginRight: "0.5rem" }}>connecting...</span>;
+  return <span>connecting...</span>;
 }
 
 // --- Dynamic view fetching + rendering ---
@@ -98,59 +65,36 @@ type ViewState =
 
 function DynamicView({
   clappId,
-  agentId,
-  sessionToken,
+  transport,
 }: {
   clappId: string;
-  agentId: string;
-  sessionToken?: string;
+  transport: ClappTransport;
 }) {
   const [viewState, setViewState] = useState<ViewState>({ status: "loading" });
 
   const fetchViews = useCallback(async () => {
     try {
       // Fetch the app definition
-      const appRes = await relayFetch(
-        `/api/views/${encodeURIComponent(agentId)}/${encodeURIComponent(clappId)}.app`,
-        sessionToken,
-      );
+      const appMd = await transport.fetchView(`${clappId}.app`);
 
-      if (appRes.status === 404) {
+      if (!appMd) {
         setViewState({ status: "no-view" });
         return;
       }
 
-      if (!appRes.ok) {
-        setViewState({
-          status: "error",
-          message: `Failed to fetch app definition: ${appRes.status}`,
-        });
-        return;
-      }
-
-      const appMarkdown = await appRes.text();
-      const appSpec = parseAppMd(appMarkdown);
+      const appSpec = parseAppMd(appMd);
 
       // Fetch each module view in parallel
-      const modules: ViewSpec[] = [];
       const moduleResults = await Promise.all(
         appSpec.modules.map(async (moduleRef) => {
-          // Module refs are "domain/name" — the viewId is the full ref
           const viewId = moduleRef.replace("/", ".");
-          const modRes = await relayFetch(
-            `/api/views/${encodeURIComponent(agentId)}/${encodeURIComponent(viewId)}.view`,
-            sessionToken,
-          );
-          if (!modRes.ok) return null;
-          const markdown = await modRes.text();
-          return parseViewMd(markdown);
+          const md = await transport.fetchView(`${viewId}.view`);
+          if (!md) return null;
+          return parseViewMd(md);
         })
       );
 
-      for (const mod of moduleResults) {
-        if (mod) modules.push(mod);
-      }
-
+      const modules = moduleResults.filter((m): m is ViewSpec => m !== null);
       setViewState({ status: "ready", appSpec, modules });
     } catch (err) {
       setViewState({
@@ -158,15 +102,20 @@ function DynamicView({
         message: err instanceof Error ? err.message : "Failed to load views",
       });
     }
-  }, [clappId, agentId, sessionToken]);
+  }, [clappId, transport]);
 
   useEffect(() => {
     fetchViews();
 
-    // Re-fetch views periodically in case the agent updates them
-    const interval = setInterval(fetchViews, 10000);
-    return () => clearInterval(interval);
-  }, [fetchViews]);
+    // Also re-fetch when views update via WS
+    const unsub = transport.onView((viewId) => {
+      if (viewId === `${clappId}.app` || viewId.endsWith(".view")) {
+        fetchViews();
+      }
+    });
+
+    return unsub;
+  }, [fetchViews, transport, clappId]);
 
   switch (viewState.status) {
     case "loading":
@@ -183,8 +132,8 @@ function DynamicView({
           <div
             style={{
               padding: "0.75rem 1rem",
-              background: "var(--error-bg, #fef2f2)",
-              color: "var(--error, #dc2626)",
+              background: "rgba(220, 38, 38, 0.1)",
+              color: "#ef4444",
               borderRadius: "0.375rem",
               fontSize: "0.875rem",
             }}
@@ -285,7 +234,7 @@ function renderEntries(
         }}
       >
         <span style={{ color: "var(--muted)" }}>{fullPath}:</span>
-        <span style={{ color: "var(--foreground)" }}>
+        <span>
           {typeof value === "string" ? value : JSON.stringify(value)}
         </span>
       </div>

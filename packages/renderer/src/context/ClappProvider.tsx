@@ -1,14 +1,15 @@
 import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
 import { createStore, useStore, type StoreApi } from "zustand";
-import { ClappClient, StatePoller } from "@clapps/transport";
+import { ClappTransport } from "@clapps/transport";
 import type { ClappState } from "@clapps/core";
-import { setByPath } from "@clapps/core";
 
 interface ClappStoreState {
   state: Record<string, unknown>;
   version: number;
   loading: boolean;
+  connected: boolean;
   applyState: (clappState: ClappState) => void;
+  setConnected: (connected: boolean) => void;
 }
 
 function createClappStore() {
@@ -16,64 +17,89 @@ function createClappStore() {
     state: {},
     version: -1,
     loading: true,
+    connected: false,
     applyState: (clappState: ClappState) =>
       set({
         state: clappState.state,
         version: clappState.version,
         loading: false,
       }),
+    setConnected: (connected: boolean) => set({ connected }),
   }));
 }
 
 interface ClappContextValue {
   store: StoreApi<ClappStoreState>;
-  client: ClappClient;
+  transport: ClappTransport;
+  clappId: string;
 }
 
 const ClappContext = createContext<ClappContextValue | null>(null);
 
 export interface ClappProviderProps {
-  relayUrl: string;
+  serverUrl: string;
   clappId: string;
-  agentId: string;
-  sessionToken?: string;
   children: ReactNode;
-  pollInterval?: number;
+  transport?: ClappTransport; // allow sharing a transport across providers
 }
 
 export function ClappProvider({
-  relayUrl,
+  serverUrl,
   clappId,
-  agentId,
-  sessionToken,
   children,
-  pollInterval = 1500,
+  transport: externalTransport,
 }: ClappProviderProps) {
   const storeRef = useRef<StoreApi<ClappStoreState>>(undefined);
-  const clientRef = useRef<ClappClient>(undefined);
+  const transportRef = useRef<ClappTransport>(undefined);
 
   if (!storeRef.current) {
     storeRef.current = createClappStore();
   }
-  if (!clientRef.current) {
-    clientRef.current = new ClappClient({ relayUrl, clappId, agentId, sessionToken });
+  if (!transportRef.current) {
+    transportRef.current = externalTransport ?? new ClappTransport({ serverUrl });
   }
 
   useEffect(() => {
     const store = storeRef.current!;
-    const client = clientRef.current!;
+    const transport = transportRef.current!;
 
-    const poller = new StatePoller(client, {
-      intervalMs: pollInterval,
-      onState: (s) => store.getState().applyState(s),
+    // Subscribe to state updates for this clapp
+    const unsub = transport.onState((id, state) => {
+      if (id === clappId) {
+        store.getState().applyState(state);
+      }
     });
-    poller.start();
-    return () => poller.stop();
-  }, [relayUrl, clappId, agentId, pollInterval]);
+
+    const unsubConn = transport.onConnection((connected) => {
+      store.getState().setConnected(connected);
+    });
+
+    // Connect and subscribe
+    transport.connect();
+    transport.subscribe([clappId]);
+
+    // Fetch initial state via HTTP
+    transport.fetchState(clappId).then((state) => {
+      if (state) {
+        store.getState().applyState(state);
+      }
+    }).catch(() => {
+      // Will get state via WS when connected
+    });
+
+    return () => {
+      unsub();
+      unsubConn();
+      // Only disconnect if we own the transport
+      if (!externalTransport) {
+        transport.disconnect();
+      }
+    };
+  }, [serverUrl, clappId, externalTransport]);
 
   return (
     <ClappContext.Provider
-      value={{ store: storeRef.current, client: clientRef.current }}
+      value={{ store: storeRef.current, transport: transportRef.current, clappId }}
     >
       {children}
     </ClappContext.Provider>
@@ -105,11 +131,16 @@ export function useClappLoading(): boolean {
   return useStore(store, (s) => s.loading);
 }
 
+export function useClappConnected(): boolean {
+  const { store } = useClappContext();
+  return useStore(store, (s) => s.connected);
+}
+
 /** Emit an intent */
 export function useIntent() {
-  const { client } = useClappContext();
+  const { transport, clappId } = useClappContext();
   return {
     emit: (intent: string, payload: Record<string, unknown> = {}) =>
-      client.sendIntent(intent, payload),
+      transport.sendIntent(clappId, intent, payload),
   };
 }

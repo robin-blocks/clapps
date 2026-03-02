@@ -1,9 +1,9 @@
 node_modules/
 dist/
-.next/
-.vercel/
 *.tsbuildinfo
 .env
 .env.local
 .DS_Store
-.vercel
+
+# Built SPA embedded in connect package (rebuild with: pnpm --filter @clappstore/web-app build)
+packages/connect/web-app/

@@ -29,6 +29,10 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
+#root {
+  height: 100%;
+}
+
 /* Clapp Shell */
 .clapp-shell {
   height: 100vh;

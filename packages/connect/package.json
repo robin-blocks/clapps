@@ -1,11 +1,11 @@
 {
   "name": "@clappstore/connect",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "type": "module",
   "bin": {
     "clapps-connect": "./dist/index.js"
   },
-  "files": ["dist"],
+  "files": ["dist", "web-app"],
   "publishConfig": {
     "access": "public"
   },
@@ -13,7 +13,11 @@
     "build": "tsc",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
   "devDependencies": {
-    "@clapps/core": "workspace:*"
+    "@clapps/core": "workspace:*",
+    "@types/ws": "^8.5.13"
   }
 }

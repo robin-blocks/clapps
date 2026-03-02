@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import type { RelayClient } from "./relay-client.js";
 
 interface AppEntry {
   id: string;
@@ -184,21 +183,9 @@ export function seedDefaults(viewsDir: string, stateDir: string): void {
         writeFileSync(appsPath, JSON.stringify(existing, null, 2), "utf-8");
       }
     } catch {
-      // If _apps.json is malformed, don't overwrite — let the user fix it
       console.warn(`⚠️  Could not parse ${appsPath}, skipping app seeding`);
     }
   }
-}
-
-/** Push all seeded files to the relay in one shot */
-export async function pushDefaults(
-  relay: RelayClient,
-  viewsDir: string,
-  stateDir: string,
-): Promise<void> {
-  console.log("Pushing defaults to relay...");
-  await relay.syncDir(stateDir, viewsDir);
-  console.log("Initial sync complete");
 }
 
 /** Check if the agent has an AI provider API key configured and write _status.json */
@@ -222,7 +209,6 @@ export function checkAuthStatus(stateDir: string, authPath?: string): void {
     if (existsSync(targetPath)) {
       const raw = readFileSync(targetPath, "utf-8");
       const auth = JSON.parse(raw);
-      // Check if there's any non-empty key value in the auth config
       const hasKey = Object.values(auth).some((provider) => {
         if (typeof provider === "object" && provider !== null) {
           return Object.values(provider as Record<string, unknown>).some(

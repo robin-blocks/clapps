@@ -8,6 +8,7 @@ export {
   useClappContext,
   useClappState,
   useClappLoading,
+  useClappConnected,
   useIntent,
 } from "./context/ClappProvider.js";
 

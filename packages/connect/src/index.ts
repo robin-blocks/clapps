@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { AgentClient } from "./agent-client.js";
 import { AgentHandler } from "./agent-handler.js";
-import { IntentPoller } from "./intent-poller.js";
-import { RelayClient } from "./relay-client.js";
-import { loadToken, saveToken, CREDENTIALS_PATH } from "./credentials.js";
-import { seedDefaults, checkAuthStatus, pushDefaults } from "./defaults.js";
+import { StateStore } from "./state-store.js";
+import { startServer } from "./server.js";
+import { seedDefaults, checkAuthStatus } from "./defaults.js";
 import { SettingsHandler } from "./settings-handler.js";
 
 function parseArgs(args: string[]) {
@@ -22,58 +22,9 @@ function parseArgs(args: string[]) {
   return opts;
 }
 
-async function selfRegister(
-  relayUrl: string,
-  agentId: string,
-): Promise<string> {
-  const res = await fetch(`${relayUrl}/api/agent/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ agentId }),
-  });
-
-  if (res.status === 409) {
-    console.error(
-      `❌ Agent ID "${agentId}" is already registered. If this is your agent, use --token YOUR_TOKEN`,
-    );
-    process.exit(1);
-  }
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Registration failed (${res.status}): ${body}`);
-  }
-
-  const { token } = (await res.json()) as { agentId: string; token: string };
-  return token;
-}
-
-async function resolveToken(
-  relayUrl: string,
-  agentId: string,
-  explicitToken: string | undefined,
-): Promise<string> {
-  // 1. Explicit --token flag wins
-  if (explicitToken) return explicitToken;
-
-  // 2. Try saved credentials
-  const saved = loadToken(relayUrl, agentId);
-  if (saved) return saved;
-
-  // 3. Self-register
-  const token = await selfRegister(relayUrl, agentId);
-  saveToken(relayUrl, agentId, token);
-  console.log(
-    `✅ Registered agent "${agentId}" (token saved to ${CREDENTIALS_PATH})`,
-  );
-  return token;
-}
-
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const relayUrl = opts.relay ?? "https://clapps.clawlab.app";
-  const explicitToken = opts.token;
-  const agentId = opts["agent-id"];
+  const port = parseInt(opts.port ?? "3080", 10);
   const agentToken = opts["agent-token"];
   const session = opts.session ?? "agent:main:main";
   const stateDir =
@@ -83,100 +34,74 @@ async function main() {
     opts["views-dir"] ??
     resolve(homedir(), ".openclaw", "workspace", "ui", "views");
 
-  if (!agentId) {
-    console.error(
-      "Usage: clapps-connect --agent-id AGENT_ID [--token TOKEN] [--relay URL] [--agent-token TOKEN] [--session SESSION] [--views-dir PATH]",
-    );
-    process.exit(1);
-  }
-
-  console.log(`🔗 Connecting to relay: ${relayUrl}`);
-
-  const token = await resolveToken(relayUrl, agentId, explicitToken);
-
   // Ensure directories exist
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(viewsDir, { recursive: true });
 
-  // 1. Create RelayClient
-  const relay = new RelayClient({ relayUrl, token, agentId });
+  // 1. Create in-memory state store
+  const store = new StateStore();
 
   // 2. Seed defaults to disk
   seedDefaults(viewsDir, stateDir);
   checkAuthStatus(stateDir);
 
-  const settingsHandler = new SettingsHandler({ stateDir, relay });
+  const settingsHandler = new SettingsHandler({ stateDir, store });
   settingsHandler.writeSettingsState();
 
-  // 3. Push everything to relay (retried, awaited)
-  await pushDefaults(relay, viewsDir, stateDir);
-
-  console.log(`🤖 Agent ID: ${agentId}`);
-  console.log(`📁 State dir: ${stateDir}`);
-  console.log(`📄 Views dir: ${viewsDir}`);
-
-  // Create/reuse a stable link token for browser access
-  try {
-    const linkRes = await fetch(`${relayUrl}/api/agent/links`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ agentId }),
-    });
-
-    if (linkRes.ok) {
-      const link = (await linkRes.json()) as { linkToken: string };
-      const browserUrl = `${relayUrl}/?agentId=${encodeURIComponent(agentId)}&link=${encodeURIComponent(link.linkToken)}`;
-      console.log(`\n🌐 Open in browser: ${browserUrl}`);
-      console.log(`   (stable link — reuse across restarts)\n`);
-    } else {
-      console.warn(`⚠️  Failed to create link: ${linkRes.status}`);
-    }
-  } catch (err) {
-    console.warn(
-      `⚠️  Could not create link: ${err instanceof Error ? err.message : err}`,
-    );
-  }
-
-  // 4. Start ACP subprocess
+  // 3. Start ACP subprocess
   const agentClient = new AgentClient({
     session,
     agentToken,
     onError: (err) => console.error("[acp]", err.message),
   });
 
+  let agentStarted = false;
   try {
     await agentClient.start();
+    agentStarted = true;
   } catch (err) {
     console.error(`⚠️  ACP failed to start: ${err instanceof Error ? err.message : err}`);
     console.error("   Intent processing will not work until ACP is available.");
   }
 
-  // 5. Start polling for intents
+  // 4. Create agent handler (syncs disk → store after intents)
   const agentHandler = new AgentHandler({
     agentClient,
-    relay,
+    store,
     stateDir,
     viewsDir,
   });
 
-  const intentPoller = new IntentPoller({
-    relayUrl,
-    token,
-    agentId,
-    agentHandler,
-    onIntent: settingsHandler.handleIntent,
-    onError: (err) => console.error("[intent-poller]", err.message),
+  // 5. Initial sync: load all disk state into the store
+  await agentHandler.syncToStore();
+
+  // 6. Resolve static SPA directory
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const staticDir = resolve(__dirname, "..", "web-app");
+
+  // 7. Start HTTP + WebSocket server
+  const server = startServer({
+    port,
+    store,
+    staticDir,
+    agentConnected: () => agentStarted,
+    onIntent: (intent, _context) => {
+      // Let settings handler intercept first
+      if (settingsHandler.handleIntent(intent)) return;
+      // Forward to agent
+      agentHandler.handleIntent(intent).catch((err) => {
+        console.error(`[intent] ${(err as Error).message}`);
+      });
+    },
   });
 
-  intentPoller.start();
+  console.log(`📁 State dir: ${stateDir}`);
+  console.log(`📄 Views dir: ${viewsDir}`);
 
   // Graceful shutdown
   process.on("SIGINT", () => {
     console.log("\nShutting down...");
-    intentPoller.stop();
+    server.close();
     agentClient.stop();
     process.exit(0);
   });

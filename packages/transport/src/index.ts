@@ -1,2 +1,1 @@
-export { ClappClient, type ClappClientOptions } from "./client.js";
-export { StatePoller, type PollingOptions } from "./polling.js";
+export { ClappTransport, type ClappTransportOptions, type ClientContext } from "./client.js";

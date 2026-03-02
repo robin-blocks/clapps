@@ -4,22 +4,22 @@ import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { IntentMessage } from "@clapps/core";
 import { checkAuthStatus } from "./defaults.js";
-import type { RelayClient } from "./relay-client.js";
+import type { StateStore } from "./state-store.js";
 
 export interface SettingsHandlerOptions {
   stateDir: string;
-  relay: RelayClient;
+  store: StateStore;
   authPath?: string;
 }
 
 export class SettingsHandler {
   private stateDir: string;
-  private relay: RelayClient;
+  private store: StateStore;
   private authPath: string;
 
   constructor(options: SettingsHandlerOptions) {
     this.stateDir = options.stateDir;
-    this.relay = options.relay;
+    this.store = options.store;
     this.authPath =
       options.authPath ??
       resolve(homedir(), ".openclaw", "agents", "main", "agent", "auth.json");
@@ -56,7 +56,6 @@ export class SettingsHandler {
 
   /** Write auth.json with the Anthropic API key */
   private setAnthropicKey(apiKey: string): void {
-    // Read existing auth or start fresh
     let auth: Record<string, unknown> = {};
     try {
       if (existsSync(this.authPath)) {
@@ -67,23 +66,15 @@ export class SettingsHandler {
     }
 
     auth.anthropic = { apiKey };
-
-    // Ensure directory exists
     mkdirSync(dirname(this.authPath), { recursive: true });
     writeFileSync(this.authPath, JSON.stringify(auth, null, 2), "utf-8");
     console.log(`✅ Anthropic API key saved to ${this.authPath}`);
 
-    // Update settings state with masked key and push directly
     this.writeSettingsState();
-    this.pushSettingsState().catch((err) =>
-      console.error(`[settings] Failed to push settings: ${(err as Error).message}`),
-    );
+    this.pushSettingsState();
 
-    // Re-check auth status so _status.json reflects the new key, then push
     checkAuthStatus(this.stateDir, this.authPath);
-    this.pushStatusState().catch((err) =>
-      console.error(`[settings] Failed to push status: ${(err as Error).message}`),
-    );
+    this.pushStatusState();
   }
 
   /** Set Claude subscription token via openclaw CLI */
@@ -102,17 +93,11 @@ export class SettingsHandler {
 
     console.log("✅ Claude subscription token saved via openclaw");
 
-    // Update settings state and push
     this.writeSettingsState();
-    this.pushSettingsState().catch((err) =>
-      console.error(`[settings] Failed to push settings: ${(err as Error).message}`),
-    );
+    this.pushSettingsState();
 
-    // Re-check auth status so _status.json reflects the new token, then push
     checkAuthStatus(this.stateDir, this.authPath);
-    this.pushStatusState().catch((err) =>
-      console.error(`[settings] Failed to push status: ${(err as Error).message}`),
-    );
+    this.pushStatusState();
   }
 
   /** Write settings.json state with provider status (masked keys) */
@@ -149,44 +134,38 @@ export class SettingsHandler {
       description = "**Claude Subscription** — Token configured";
     }
 
-    const statePath = resolve(this.stateDir, "settings.json");
-    writeFileSync(
-      statePath,
-      JSON.stringify(
-        {
-          version: Date.now(),
-          timestamp: new Date().toISOString(),
-          state: {
-            active: { isConfigured, description },
-            providers: {
-              anthropic: {
-                apiKey: { configured: apiKeyConfigured, maskedKey },
-                subscription: {
-                  configured: subscriptionConfigured,
-                  instructions: "Run `claude setup-token` on your server, then paste the output here.",
-                },
-              },
+    const state = {
+      version: Date.now(),
+      timestamp: new Date().toISOString(),
+      state: {
+        active: { isConfigured, description },
+        providers: {
+          anthropic: {
+            apiKey: { configured: apiKeyConfigured, maskedKey },
+            subscription: {
+              configured: subscriptionConfigured,
+              instructions: "Run `claude setup-token` on your server, then paste the output here.",
             },
           },
         },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+      },
+    };
+
+    const statePath = resolve(this.stateDir, "settings.json");
+    writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
   }
 
-  /** Push settings.json state to relay */
-  async pushSettingsState(): Promise<void> {
+  /** Push settings state to in-memory store */
+  private pushSettingsState(): void {
     const statePath = resolve(this.stateDir, "settings.json");
     const content = readFileSync(statePath, "utf-8");
-    await this.relay.pushState("settings", JSON.parse(content));
+    this.store.setState("settings", JSON.parse(content));
   }
 
-  /** Push _status.json state to relay */
-  async pushStatusState(): Promise<void> {
+  /** Push _status state to in-memory store */
+  private pushStatusState(): void {
     const statePath = resolve(this.stateDir, "_status.json");
     const content = readFileSync(statePath, "utf-8");
-    await this.relay.pushState("_status", JSON.parse(content));
+    this.store.setState("_status", JSON.parse(content));
   }
 }
