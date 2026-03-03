@@ -225,20 +225,19 @@ export class AgentClient {
     });
 
     this.proc.on("exit", (code) => {
+      const err = new Error(`ACP process exited unexpectedly (code ${code})`);
+
+      // Always reject pending requests (including during initial start() handshake)
+      for (const [, pending] of this.pending) {
+        pending.reject(err);
+      }
+      this.pending.clear();
+
       if (this.started) {
-        const err = new Error(`ACP process exited unexpectedly (code ${code})`);
         this.onError?.(err);
-        // Auto-restart
         this.proc = null;
         this.rl = null;
         this.loadedSessions.clear();
-        // Reject pending requests
-        for (const [, pending] of this.pending) {
-          pending.reject(err);
-        }
-        this.pending.clear();
-
-        // Mark disconnected so start() can actually run again
         this.started = false;
 
         // Attempt restart after a short delay
