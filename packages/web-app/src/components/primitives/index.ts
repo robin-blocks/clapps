@@ -13,4 +13,7 @@ export { MarkdownContent } from "./MarkdownContent";
 export { Icon } from "./Icon";
 export { ProviderList } from "./ProviderList";
 export { SessionList } from "./SessionList";
+export { ChatLayout } from "./ChatLayout";
+export { ChatMessages } from "./ChatMessages";
+export { ChatInput } from "./ChatInput";
 export { FormProvider, useFormContext } from "./FormContext";

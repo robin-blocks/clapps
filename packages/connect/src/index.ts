@@ -10,6 +10,7 @@ import { StateStore } from "./state-store.js";
 import { startServer } from "./server.js";
 import { seedDefaults, checkAuthStatus } from "./defaults.js";
 import { SettingsHandler } from "./settings-handler.js";
+import { ChatHandler } from "./chat-handler.js";
 
 function parseArgs(args: string[]) {
   const opts: Record<string, string> = {};
@@ -48,21 +49,33 @@ async function main() {
   const settingsHandler = new SettingsHandler({ stateDir, store });
   settingsHandler.writeSettingsState();
 
-  // 3. Start ACP subprocess
+  // 3. Start ACP subprocess for intents
   const agentClient = new AgentClient({
     session,
     agentToken,
     onError: (err) => console.error("[acp]", err.message),
   });
 
+  // 4. Start separate ACP subprocess for chat (dedicated session)
+  const chatSession = "agent:main:clapps-chat";
+  const chatAgentClient = new AgentClient({
+    session: chatSession,
+    agentToken,
+    onError: (err) => console.error("[acp:chat]", err.message),
+  });
+
   let agentStarted = false;
   try {
     await agentClient.start();
+    await chatAgentClient.start();
     agentStarted = true;
   } catch (err) {
     console.error(`⚠️  ACP failed to start: ${err instanceof Error ? err.message : err}`);
     console.error("   Intent processing will not work until ACP is available.");
   }
+
+  // Create chat handler (uses dedicated chat session)
+  const chatHandler = new ChatHandler({ stateDir, store, agentClient: chatAgentClient });
 
   // 4. Create agent handler (syncs disk → store after intents)
   const agentHandler = new AgentHandler({
@@ -90,8 +103,9 @@ async function main() {
       settingsHandler.refreshSettingsState();
     },
     onIntent: (intent, _context) => {
-      // Let settings handler intercept first
+      // Let handlers intercept first
       if (settingsHandler.handleIntent(intent)) return;
+      if (chatHandler.handleIntent(intent)) return;
       // Forward to agent
       agentHandler.handleIntent(intent).catch((err) => {
         console.error(`[intent] ${(err as Error).message}`);
@@ -113,6 +127,7 @@ async function main() {
     clearInterval(refreshInterval);
     server.close();
     agentClient.stop();
+    chatAgentClient.stop();
     process.exit(0);
   });
 }

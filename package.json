@@ -2,10 +2,11 @@
   "name": "clapps",
   "private": true,
   "scripts": {
-    "build": "pnpm -r build",
-    "build:web-app": "pnpm --filter @clappstore/web-app build",
-    "dev": "pnpm --filter @clappstore/web-app dev",
-    "dev:connect": "pnpm --filter @clappstore/connect dev",
+    "sync:clapps": "node scripts/sync-clapps.mjs",
+    "build": "pnpm sync:clapps && pnpm -r build",
+    "build:web-app": "pnpm sync:clapps && pnpm --filter @clappstore/web-app build",
+    "dev": "pnpm sync:clapps && pnpm --filter @clappstore/web-app dev",
+    "dev:connect": "pnpm sync:clapps && pnpm --filter @clappstore/connect dev",
     "test": "vitest",
     "lint": "tsc --noEmit",
     "clean": "pnpm -r clean"

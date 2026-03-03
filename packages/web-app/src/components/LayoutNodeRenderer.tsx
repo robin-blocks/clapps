@@ -16,6 +16,9 @@ import {
   IntentForm,
   ProviderList,
   SessionList,
+  ChatLayout,
+  ChatMessages,
+  ChatInput,
 } from "./primitives";
 
 /** Map component names from the DSL to React components */
@@ -35,6 +38,9 @@ const componentMap: Record<string, ComponentType<any>> = {
   IntentForm,
   ProviderList,
   SessionList,
+  ChatLayout,
+  ChatMessages,
+  ChatInput,
 };
 
 interface LayoutNodeRendererProps {

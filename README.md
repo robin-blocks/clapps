@@ -106,6 +106,28 @@ pnpm test      # runs vitest
 
 Requires Node >= 22, pnpm 9+.
 
+### Clapps as self-contained modules
+
+Each clapp lives under `clapps/<id>/` and is treated as the source-of-truth for:
+- `clapp.json`
+- `views/*`
+- `components/*`
+- `handlers/*`
+
+Build/dev runs `pnpm sync:clapps` first, which copies clapp components/handlers into package runtime locations.
+
+If `clapps/*` are managed as git submodules, clone with:
+
+```bash
+git clone --recurse-submodules <repo>
+```
+
+or after clone:
+
+```bash
+git submodule update --init --recursive
+```
+
 ## Architecture
 
 ```

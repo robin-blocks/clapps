@@ -34,23 +34,25 @@ version: 0.1.0
 ---
 
 ## State Bindings
-- \`messages\` -> array
-- \`loading\` -> boolean
+- \`chat.sessions\` -> array
+- \`chat.activeSession\` -> string
+- \`chat.messages\` -> array
+- \`chat.loading\` -> boolean
 
 ## Layout
 \`\`\`clapp-layout
-Column(gap=4):
-  List(data=messages):
-  Conditional(when=loading):
-    Skeleton:
-  IntentForm(intent=chat.send, submitLabel=Send):
-    TextInput(name=text, placeholder=Type a message...):
+ChatLayout():
 \`\`\`
 
 ## Intents
 | Name | Payload | Description |
 |------|---------|-------------|
-| chat.send | \`{ text: string }\` | Send a chat message |
+| chat.init | \`{}\` | Initialize chat and load sessions |
+| chat.send | \`{ text: string }\` | Send a message |
+| chat.newSession | \`{}\` | Create a new chat session |
+| chat.switchSession | \`{ sessionKey: string }\` | Switch to a different session |
+| chat.deleteSession | \`{ sessionKey: string }\` | Delete a session |
+| chat.loadOlder | \`{}\` | Load older messages for current session |
 `;
 
 const DEFAULT_SETTINGS_APP_MD = `---
