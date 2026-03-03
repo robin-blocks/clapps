@@ -3,6 +3,7 @@ import type { IntentMessage, ClappState, AppEntry } from "@clapps/core";
 export interface ClappTransportOptions {
   serverUrl: string; // e.g. "http://localhost:3080" or tunnel URL
   context?: ClientContext;
+  token?: string; // access token for non-browser clients (Bearer header + WS query param)
 }
 
 export interface ClientContext {
@@ -24,6 +25,7 @@ export class ClappTransport {
   private serverUrl: string;
   private wsUrl: string;
   private context?: ClientContext;
+  private token?: string;
   private ws: WebSocket | null = null;
   private connected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -37,11 +39,13 @@ export class ClappTransport {
   constructor(options: ClappTransportOptions) {
     this.serverUrl = options.serverUrl.replace(/\/$/, "");
     this.context = options.context;
+    this.token = options.token;
 
     // Derive WS URL from HTTP URL
     const url = new URL(this.serverUrl);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     url.pathname = "/ws";
+    if (this.token) url.searchParams.set("token", this.token);
     this.wsUrl = url.toString();
   }
 
@@ -120,7 +124,7 @@ export class ClappTransport {
 
     const res = await fetch(`${this.serverUrl}/api/intent`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...this.authHeaders() },
       body: JSON.stringify(message),
     });
 
@@ -131,14 +135,18 @@ export class ClappTransport {
 
   /** Fetch apps via HTTP (for initial load before WS connects) */
   async fetchApps(): Promise<AppEntry[]> {
-    const res = await fetch(`${this.serverUrl}/api/apps`);
+    const res = await fetch(`${this.serverUrl}/api/apps`, {
+      headers: this.authHeaders(),
+    });
     if (!res.ok) throw new Error(`Failed to fetch apps: ${res.status}`);
     return res.json() as Promise<AppEntry[]>;
   }
 
   /** Fetch state via HTTP (for initial load) */
   async fetchState(clappId: string): Promise<ClappState | null> {
-    const res = await fetch(`${this.serverUrl}/api/state/${clappId}`);
+    const res = await fetch(`${this.serverUrl}/api/state/${clappId}`, {
+      headers: this.authHeaders(),
+    });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`Failed to fetch state: ${res.status}`);
     return res.json() as Promise<ClappState>;
@@ -146,10 +154,19 @@ export class ClappTransport {
 
   /** Fetch view markdown via HTTP (for initial load) */
   async fetchView(viewId: string): Promise<string | null> {
-    const res = await fetch(`${this.serverUrl}/api/views/${viewId}`);
+    const res = await fetch(`${this.serverUrl}/api/views/${viewId}`, {
+      headers: this.authHeaders(),
+    });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`Failed to fetch view: ${res.status}`);
     return res.text();
+  }
+
+  // --- Auth helpers ---
+
+  private authHeaders(): Record<string, string> {
+    if (!this.token) return {};
+    return { Authorization: `Bearer ${this.token}` };
   }
 
   // --- WebSocket internals ---

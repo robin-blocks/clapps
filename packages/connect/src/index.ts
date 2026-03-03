@@ -11,23 +11,34 @@ import { startServer } from "./server.js";
 import { seedDefaults, checkAuthStatus } from "./defaults.js";
 import { SettingsHandler } from "./settings-handler.js";
 import { ChatHandler } from "./chat-handler.js";
+import { initAccessToken, formatToken } from "./auth.js";
 
 function parseArgs(args: string[]) {
   const opts: Record<string, string> = {};
+  const flags: Record<string, boolean> = {};
   for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith("--") && i + 1 < args.length) {
-      opts[args[i].slice(2)] = args[i + 1];
+    const arg = args[i];
+    if (arg === "--no-auth") {
+      flags["no-auth"] = true;
+    } else if (arg.startsWith("--") && i + 1 < args.length) {
+      opts[arg.slice(2)] = args[i + 1];
       i++;
     }
   }
-  return opts;
+  return { opts, flags };
 }
 
 async function main() {
-  const opts = parseArgs(process.argv.slice(2));
+  const { opts, flags } = parseArgs(process.argv.slice(2));
   const port = parseInt(opts.port ?? "3080", 10);
   const agentToken = opts["agent-token"];
   const session = opts.session ?? "agent:main:main";
+
+  // Initialize access token for auth
+  const accessToken = initAccessToken({
+    token: opts.token,
+    noAuth: flags["no-auth"],
+  });
   const stateDir =
     opts["state-dir"] ??
     resolve(homedir(), ".openclaw", "workspace", "ui", "state");
@@ -97,6 +108,7 @@ async function main() {
     port,
     store,
     staticDir,
+    accessToken,
     agentConnected: () => agentStarted,
     onConnect: () => {
       // Refresh settings state when a client connects (catches external changes)
@@ -120,6 +132,12 @@ async function main() {
 
   console.log(`📁 State dir: ${stateDir}`);
   console.log(`📄 Views dir: ${viewsDir}`);
+  if (accessToken) {
+    console.log(`🔐 Access code: ${formatToken(accessToken)}`);
+    console.log(`   Saved to ~/.openclaw/workspace/ui/.access-token`);
+  } else {
+    console.log(`⚠️  Auth disabled (--no-auth). Server is open to all.`);
+  }
 
   // Graceful shutdown
   process.on("SIGINT", () => {

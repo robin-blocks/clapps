@@ -5,6 +5,13 @@ import { existsSync } from "node:fs";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { IntentMessage } from "@clapps/core";
 import { StateStore, type ClientContext, type WsMessage } from "./state-store.js";
+import {
+  authenticateRequest,
+  authenticateWsUpgrade,
+  checkRateLimit,
+  setSessionCookie,
+  getLoginPageHtml,
+} from "./auth.js";
 
 export interface ServerOptions {
   port: number;
@@ -13,6 +20,7 @@ export interface ServerOptions {
   staticDir?: string; // path to built SPA files
   agentConnected?: () => boolean;
   onConnect?: () => void; // called when a client connects (for state refresh)
+  accessToken?: string | null; // null = no auth
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -28,13 +36,25 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export function startServer(options: ServerOptions): { close: () => void } {
-  const { port, store, onIntent, staticDir, agentConnected, onConnect } = options;
+  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken } = options;
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, store, onIntent, staticDir, agentConnected);
+    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null);
   });
 
-  const wss = new WebSocketServer({ server });
+  // Use noServer mode so we can authenticate WS upgrades
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (req, socket, head) => {
+    if (!authenticateWsUpgrade(req, accessToken ?? null)) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+  });
 
   wss.on("connection", (ws: WebSocket) => {
     const client = store.addClient(ws);
@@ -108,19 +128,60 @@ async function handleRequest(
   onIntent: ServerOptions["onIntent"],
   staticDir: string | undefined,
   agentConnected: (() => boolean) | undefined,
+  accessToken: string | null,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   const path = url.pathname;
 
-  // CORS headers for all responses
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // CORS headers
+  if (accessToken != null) {
+    // With auth: reflect origin and allow credentials
+    const origin = req.headers.origin;
+    if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
     return;
+  }
+
+  // Auth-exempt routes
+  if (path === "/api/health") {
+    return handleApi(req, res, path, store, onIntent, agentConnected);
+  }
+
+  // Login routes
+  if (path === "/auth/login") {
+    if (req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(getLoginPageHtml());
+      return;
+    }
+    if (req.method === "POST") {
+      return handleLogin(req, res, accessToken);
+    }
+  }
+
+  // Auth check for everything else
+  if (accessToken != null) {
+    const { authenticated } = authenticateRequest(req, accessToken);
+    if (!authenticated) {
+      if (path.startsWith("/api/")) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
+      // Browser routes → show login page
+      res.writeHead(401, { "Content-Type": "text/html" });
+      res.end(getLoginPageHtml());
+      return;
+    }
   }
 
   // API routes
@@ -135,6 +196,48 @@ async function handleRequest(
 
   res.writeHead(404, { "Content-Type": "text/plain" });
   res.end("Not Found");
+}
+
+async function handleLogin(
+  req: IncomingMessage,
+  res: ServerResponse,
+  accessToken: string | null,
+): Promise<void> {
+  // If no auth, just redirect
+  if (accessToken === null) {
+    res.writeHead(302, { Location: "/" });
+    res.end();
+    return;
+  }
+
+  const ip =
+    (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ??
+    req.socket.remoteAddress ??
+    "unknown";
+
+  if (!checkRateLimit(ip)) {
+    res.writeHead(429, { "Content-Type": "text/html" });
+    res.end(getLoginPageHtml("Too many attempts. Please wait a minute."));
+    return;
+  }
+
+  const body = await readBody(req);
+  const params = new URLSearchParams(body);
+  const password = params.get("password")?.trim() ?? "";
+  const remember = params.get("remember") === "1";
+
+  // Normalize: strip dashes for comparison (user may paste formatted code)
+  const normalized = password.replace(/-/g, "");
+
+  if (normalized !== accessToken) {
+    res.writeHead(401, { "Content-Type": "text/html" });
+    res.end(getLoginPageHtml("Invalid access code."));
+    return;
+  }
+
+  setSessionCookie(res, accessToken, req, remember);
+  res.writeHead(302, { Location: "/" });
+  res.end();
 }
 
 async function handleApi(
