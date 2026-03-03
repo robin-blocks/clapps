@@ -410,12 +410,9 @@ export class SettingsHandler {
 
   /** Set the active AI provider by choosing its first configured model */
   private setActiveProvider(provider: string): void {
-    // Provider may be a full profile ID (e.g. "anthropic:anthropic-theforever")
-    // or a base provider name. Extract base provider for model lookup.
-    const baseProvider = provider.includes(":") ? provider.split(":")[0] : provider;
-    const modelId = this.getFirstModelForProvider(baseProvider);
+    const modelId = this.getFirstModelForProvider(provider);
     if (!modelId) {
-      console.warn(`[settings] Unknown provider or no models available: ${baseProvider}`);
+      console.warn(`[settings] Unknown provider or no models available: ${provider}`);
       return;
     }
 
@@ -646,16 +643,12 @@ export class SettingsHandler {
         }
 
         if (maskedCredential) {
-          // Derive base provider from profile ID prefix (e.g. "anthropic" from "anthropic:anthropic-theforever")
-          // profile.provider may contain account-specific names that don't match the model catalog
-          const baseProvider = profileId.includes(":") ? profileId.split(":")[0] : profile.provider;
-
           // Check if this provider is the active one
-          const isActive = activeModel?.provider === baseProvider;
-
+          const isActive = activeModel?.provider === profile.provider;
+          
           // Use custom name if available; otherwise include profile identifier to avoid duplicate labels
           const profileIdentifier = profileId.includes(":") ? profileId.split(":")[1] : profileId;
-          const baseName = this.formatProviderName(baseProvider);
+          const baseName = this.formatProviderName(profile.provider);
           const displayName = profile.customName || `${baseName} · ${profileIdentifier}`;
 
           providers.push({
@@ -666,7 +659,7 @@ export class SettingsHandler {
             authType,
             maskedCredential,
             active: isActive,
-            models: modelsByProvider.get(baseProvider) ?? [],
+            models: modelsByProvider.get(profile.provider) ?? [],
           });
         }
       }
