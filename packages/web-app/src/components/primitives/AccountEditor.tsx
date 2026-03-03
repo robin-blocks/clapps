@@ -12,11 +12,10 @@ interface AccountEditorProps {
     appToken?: string;
     signingSecret?: string;
     webhookPath?: string;
-  };
-  onClose?: () => void;
+  } | null;
 }
 
-export function AccountEditor({ account, onClose }: AccountEditorProps) {
+export function AccountEditor({ account }: AccountEditorProps) {
   const { emit } = useIntent();
   const [accountId, setAccountId] = useState(account?.id || "");
   const [mode, setMode] = useState<"socket" | "http">(account?.mode as any || "socket");
@@ -34,7 +33,10 @@ export function AccountEditor({ account, onClose }: AccountEditorProps) {
       signingSecret: mode === "http" ? signingSecret : undefined,
       webhookPath: mode === "http" ? webhookPath : undefined,
     });
-    onClose?.();
+  };
+
+  const handleCancel = () => {
+    emit("slack.cancelEdit", {});
   };
 
   return (
@@ -126,11 +128,9 @@ export function AccountEditor({ account, onClose }: AccountEditorProps) {
         )}
 
         <div className="flex gap-2 justify-end pt-4">
-          {onClose && (
-            <Button variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-          )}
+          <Button variant="outline" onClick={handleCancel}>
+            Cancel
+          </Button>
           <Button onClick={handleSave} disabled={!botToken}>
             Save Account
           </Button>

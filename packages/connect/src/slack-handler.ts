@@ -50,6 +50,8 @@ interface SlackState {
   pairings: Array<{ code: string; user: string }>;
   loading: boolean;
   error?: string;
+  showAccountEditor?: boolean;
+  editingAccount?: SlackAccount | null;
 }
 
 export class SlackHandler {
@@ -69,6 +71,15 @@ export class SlackHandler {
     switch (intent.intent) {
       case "slack.init":
         this.init();
+        return true;
+      case "slack.addAccount":
+        this.addAccount();
+        return true;
+      case "slack.editAccount":
+        this.editAccount(intent.payload.accountId as string);
+        return true;
+      case "slack.cancelEdit":
+        this.cancelEdit();
         return true;
       case "slack.saveAccount":
         this.saveAccount(intent.payload);
@@ -213,6 +224,28 @@ export class SlackHandler {
     }
   }
 
+  private addAccount(): void {
+    const state = this.getCurrentState();
+    state.showAccountEditor = true;
+    state.editingAccount = null;
+    this.pushState(state);
+  }
+
+  private editAccount(accountId: string): void {
+    const state = this.getCurrentState();
+    const account = state.accounts.find((a) => a.id === accountId);
+    state.showAccountEditor = true;
+    state.editingAccount = account || null;
+    this.pushState(state);
+  }
+
+  private cancelEdit(): void {
+    const state = this.getCurrentState();
+    state.showAccountEditor = false;
+    state.editingAccount = null;
+    this.pushState(state);
+  }
+
   private saveAccount(payload: Record<string, unknown>): void {
     try {
       const accountId = payload.accountId as string;
@@ -241,6 +274,12 @@ export class SlackHandler {
       for (const update of configUpdates) {
         execAsync(`openclaw config set ${update}`).catch(console.error);
       }
+
+      // Close editor and refresh
+      const state = this.getCurrentState();
+      state.showAccountEditor = false;
+      state.editingAccount = null;
+      this.pushState(state);
 
       setTimeout(() => this.refreshState(), 500);
     } catch (err) {
