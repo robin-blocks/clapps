@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { useClappContext } from "@clapps/renderer";
+import { useIntent } from "@clapps/renderer";
 
 interface IntentButtonProps {
   intent: string;
@@ -19,7 +19,7 @@ export function IntentButton({
   label,
   children,
 }: IntentButtonProps) {
-  const { sendIntent } = useClappContext();
+  const { emit } = useIntent();
 
   // Map 'primary' variant to 'default' (shadcn doesn't have 'primary')
   const buttonVariant = variant === "primary" ? "default" : variant;
@@ -28,7 +28,7 @@ export function IntentButton({
     <Button
       variant={buttonVariant}
       size={size}
-      onClick={() => sendIntent(intent, payload)}
+      onClick={() => emit(intent, payload)}
     >
       {children || label}
     </Button>
