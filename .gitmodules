@@ -1,0 +1,6 @@
+[submodule "clapps/chat"]
+	path = clapps/chat
+	url = https://github.com/robin-blocks/clapp-chat.git
+[submodule "clapps/settings"]
+	path = clapps/settings
+	url = https://github.com/robin-blocks/clapp-settings.git
