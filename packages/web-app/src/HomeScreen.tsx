@@ -81,15 +81,15 @@ function DefaultHomeGrid({
 }) {
   if (apps.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="grid grid-cols-4 gap-6 justify-center">
-          {[1, 2, 3, 4].map((i) => (
+      <div className="flex-1 overflow-y-auto px-6 pt-6 pb-8">
+        <div className="grid grid-cols-4 sm:grid-cols-5 lg:grid-cols-6 gap-x-4 gap-y-6 max-w-6xl">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
             <div
               key={i}
-              className="flex flex-col items-center gap-1.5 animate-pulse"
+              className="flex flex-col items-center gap-2 animate-pulse"
             >
-              <div className="w-[60px] h-[60px] rounded-2xl bg-muted" />
-              <div className="h-3 w-16 rounded bg-muted" />
+              <div className="w-[72px] h-[72px] sm:w-[84px] sm:h-[84px] lg:w-[90px] lg:h-[90px] rounded-2xl bg-muted" />
+              <div className="h-2.5 w-16 rounded bg-muted" />
             </div>
           ))}
         </div>
@@ -98,18 +98,22 @@ function DefaultHomeGrid({
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center p-8">
-      <div className="grid grid-cols-4 gap-6 justify-center">
+    <div className="flex-1 overflow-y-auto px-6 pt-6 pb-8">
+      <div className="grid grid-cols-4 sm:grid-cols-5 lg:grid-cols-6 gap-x-4 gap-y-6 max-w-6xl">
         {apps.map((app) => (
           <button
             key={app.id}
             onClick={() => onOpenApp(app.id)}
-            className="flex flex-col items-center gap-1.5 bg-transparent border-none cursor-pointer text-foreground p-0 font-inherit group"
+            className="flex flex-col items-center gap-2 bg-transparent border-none cursor-pointer text-foreground p-0 font-inherit group"
           >
-            <div className="w-[60px] h-[60px] rounded-2xl bg-gradient-to-br from-card to-accent/20 border border-border flex items-center justify-center text-[1.75rem] transition-transform group-hover:scale-105">
+            <div className="w-[72px] h-[72px] sm:w-[84px] sm:h-[84px] lg:w-[90px] lg:h-[90px] rounded-[18px] sm:rounded-[20px] lg:rounded-[22px] bg-gradient-to-br from-card to-accent/20 border border-border flex items-center justify-center text-[2rem] sm:text-[2.25rem] lg:text-[2.5rem] transition-all group-hover:scale-105 active:scale-95 shadow-sm"
+              style={{ 
+                boxShadow: '0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08)'
+              }}
+            >
               {app.emoji}
             </div>
-            <span className="text-[0.6875rem] text-center leading-tight max-w-[76px] line-clamp-2">
+            <span className="text-[11px] sm:text-[12px] text-center leading-tight max-w-[90px] line-clamp-2 opacity-90">
               {app.name}
             </span>
           </button>
