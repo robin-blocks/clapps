@@ -33,8 +33,8 @@ export function initAccessToken(opts: {
     // File doesn't exist or unreadable
   }
 
-  // Generate new token: 9 random bytes → 12-char base64url
-  const token = randomBytes(9).toString("base64url");
+  // Generate new token: 6 random bytes → 12-char hex (no dashes in alphabet)
+  const token = randomBytes(6).toString("hex");
   persistToken(token);
   return token;
 }
