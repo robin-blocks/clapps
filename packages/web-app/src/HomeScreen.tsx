@@ -81,8 +81,18 @@ function DefaultHomeGrid({
 }) {
   if (apps.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <p className="text-muted-foreground text-sm">No apps registered yet.</p>
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="grid grid-cols-4 gap-6 justify-center">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="flex flex-col items-center gap-1.5 animate-pulse"
+            >
+              <div className="w-[60px] h-[60px] rounded-2xl bg-muted" />
+              <div className="h-3 w-16 rounded bg-muted" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
