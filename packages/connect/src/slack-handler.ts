@@ -52,6 +52,8 @@ interface SlackState {
   error?: string;
   showAccountEditor?: boolean;
   editingAccount?: SlackAccount | null;
+  saving?: boolean;
+  saveError?: string;
 }
 
 export class SlackHandler {
@@ -246,7 +248,13 @@ export class SlackHandler {
     this.pushState(state);
   }
 
-  private saveAccount(payload: Record<string, unknown>): void {
+  private async saveAccount(payload: Record<string, unknown>): Promise<void> {
+    // Set saving state
+    const state = this.getCurrentState();
+    state.saving = true;
+    state.saveError = undefined;
+    this.pushState(state);
+
     try {
       const accountId = payload.accountId as string;
       const mode = payload.mode as string;
@@ -255,15 +263,28 @@ export class SlackHandler {
       const signingSecret = payload.signingSecret as string | undefined;
       const webhookPath = payload.webhookPath as string | undefined;
 
+      // Validate token format
+      if (!botToken.startsWith("xoxb-")) {
+        throw new Error("Bot token must start with xoxb-");
+      }
+      if (mode === "socket" && appToken && !appToken.startsWith("xapp-")) {
+        throw new Error("App token must start with xapp-");
+      }
+
+      // Test Slack connection
+      await this.testSlackConnection(botToken);
+
       const configUpdates: string[] = [];
       
       if (accountId === "default") {
+        configUpdates.push(`channels.slack.enabled=true`);
         configUpdates.push(`channels.slack.mode=${mode}`);
         configUpdates.push(`channels.slack.botToken=${botToken}`);
         if (appToken) configUpdates.push(`channels.slack.appToken=${appToken}`);
         if (signingSecret) configUpdates.push(`channels.slack.signingSecret=${signingSecret}`);
         if (webhookPath) configUpdates.push(`channels.slack.webhookPath=${webhookPath}`);
       } else {
+        configUpdates.push(`channels.slack.accounts.${accountId}.enabled=true`);
         configUpdates.push(`channels.slack.accounts.${accountId}.mode=${mode}`);
         configUpdates.push(`channels.slack.accounts.${accountId}.botToken=${botToken}`);
         if (appToken) configUpdates.push(`channels.slack.accounts.${accountId}.appToken=${appToken}`);
@@ -271,20 +292,91 @@ export class SlackHandler {
         if (webhookPath) configUpdates.push(`channels.slack.accounts.${accountId}.webhookPath=${webhookPath}`);
       }
 
+      // Apply config changes
       for (const update of configUpdates) {
-        execAsync(`openclaw config set ${update}`).catch(console.error);
+        await execAsync(`openclaw config set ${update}`);
       }
 
-      // Close editor and refresh
-      const state = this.getCurrentState();
-      state.showAccountEditor = false;
-      state.editingAccount = null;
-      this.pushState(state);
+      // Wait for gateway to restart and connect
+      console.log("[slack] Waiting for Slack connection...");
+      await this.waitForConnection(10000); // 10 second timeout
+
+      // Success - close editor and refresh
+      const successState = this.getCurrentState();
+      successState.saving = false;
+      successState.showAccountEditor = false;
+      successState.editingAccount = null;
+      successState.saveError = undefined;
+      this.pushState(successState);
 
       setTimeout(() => this.refreshState(), 500);
     } catch (err) {
-      this.pushError((err as Error).message);
+      // Error - keep editor open and show error
+      const errorState = this.getCurrentState();
+      errorState.saving = false;
+      errorState.saveError = (err as Error).message;
+      this.pushState(errorState);
     }
+  }
+
+  private async testSlackConnection(botToken: string): Promise<void> {
+    try {
+      // Use Slack's auth.test API to validate token
+      const https = await import("node:https");
+      
+      return new Promise((resolve, reject) => {
+        const req = https.request(
+          {
+            hostname: "slack.com",
+            path: "/api/auth.test",
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${botToken}`,
+              "Content-Type": "application/json",
+            },
+          },
+          (res) => {
+            let data = "";
+            res.on("data", (chunk) => (data += chunk));
+            res.on("end", () => {
+              try {
+                const result = JSON.parse(data);
+                if (result.ok) {
+                  console.log(`[slack] Token validated: ${result.team} (${result.user})`);
+                  resolve();
+                } else {
+                  reject(new Error(`Slack API error: ${result.error || "Unknown error"}`));
+                }
+              } catch (err) {
+                reject(new Error("Failed to parse Slack API response"));
+              }
+            });
+          }
+        );
+        req.on("error", (err) => reject(new Error(`Connection failed: ${err.message}`)));
+        req.end();
+      });
+    } catch (err) {
+      throw new Error(`Token validation failed: ${(err as Error).message}`);
+    }
+  }
+
+  private async waitForConnection(timeoutMs: number): Promise<void> {
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const result = await execAsync("openclaw channels status --json", { timeout: 2000 });
+        const status = JSON.parse(result.stdout);
+        if (status.slack && status.slack.connected) {
+          console.log("[slack] Connection established");
+          return;
+        }
+      } catch {
+        // Ignore errors during polling
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    console.warn("[slack] Connection timeout - config saved but connection not confirmed");
   }
 
   private deleteAccount(accountId: string): void {
