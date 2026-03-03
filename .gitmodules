@@ -4,3 +4,6 @@
 [submodule "clapps/settings"]
 	path = clapps/settings
 	url = https://github.com/robin-blocks/clapp-settings.git
+[submodule "clapps/slack"]
+	path = clapps/slack
+	url = https://github.com/robin-blocks/clapp-slack.git

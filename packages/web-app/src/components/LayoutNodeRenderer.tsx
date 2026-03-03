@@ -19,6 +19,14 @@ import {
   ChatLayout,
   ChatMessages,
   ChatInput,
+  AccountCard,
+  AccountEditor,
+  ChannelList,
+  ChannelEditor,
+  PolicySelector,
+  FeatureToggles,
+  SlashCommandConfig,
+  ConnectionStatus,
 } from "./primitives";
 
 /** Map component names from the DSL to React components */
@@ -41,6 +49,14 @@ const componentMap: Record<string, ComponentType<any>> = {
   ChatLayout,
   ChatMessages,
   ChatInput,
+  AccountCard,
+  AccountEditor,
+  ChannelList,
+  ChannelEditor,
+  PolicySelector,
+  FeatureToggles,
+  SlashCommandConfig,
+  ConnectionStatus,
 };
 
 interface LayoutNodeRendererProps {

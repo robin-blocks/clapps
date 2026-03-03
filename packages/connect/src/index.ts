@@ -11,6 +11,7 @@ import { startServer } from "./server.js";
 import { seedDefaults, checkAuthStatus } from "./defaults.js";
 import { SettingsHandler } from "./settings-handler.js";
 import { ChatHandler } from "./chat-handler.js";
+import { SlackHandler } from "./slack-handler.js";
 import { initAccessToken, formatToken } from "./auth.js";
 
 function parseArgs(args: string[]) {
@@ -88,6 +89,9 @@ async function main() {
   // Create chat handler (uses dedicated chat session)
   const chatHandler = new ChatHandler({ stateDir, store, agentClient: chatAgentClient });
 
+  // Create slack handler
+  const slackHandler = new SlackHandler({ stateDir, store });
+
   // 4. Create agent handler (syncs disk → store after intents)
   const agentHandler = new AgentHandler({
     agentClient,
@@ -118,6 +122,7 @@ async function main() {
       // Let handlers intercept first
       if (settingsHandler.handleIntent(intent)) return;
       if (chatHandler.handleIntent(intent)) return;
+      if (slackHandler.handleIntent(intent)) return;
       // Forward to agent
       agentHandler.handleIntent(intent).catch((err) => {
         console.error(`[intent] ${(err as Error).message}`);
