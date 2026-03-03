@@ -43,6 +43,11 @@ function DynamicView({
 }) {
   const [viewState, setViewState] = useState<ViewState>({ status: "loading" });
 
+  // Call init intent when clapp is first opened
+  useEffect(() => {
+    transport.sendIntent(clappId, `${clappId}.init`, {});
+  }, [clappId, transport]);
+
   const fetchViews = useCallback(async () => {
     try {
       const appMd = await transport.fetchView(`${clappId}.app`);
