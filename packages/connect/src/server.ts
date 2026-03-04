@@ -12,6 +12,7 @@ import {
   setSessionCookie,
   getLoginPageHtml,
 } from "./auth.js";
+import { OAuthHandler } from "./oauth-handler.js";
 
 export interface ServerOptions {
   port: number;
@@ -21,6 +22,7 @@ export interface ServerOptions {
   agentConnected?: () => boolean;
   onConnect?: () => void; // called when a client connects (for state refresh)
   accessToken?: string | null; // null = no auth
+  oauthHandler?: OAuthHandler;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -44,10 +46,10 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export function startServer(options: ServerOptions): { close: () => void } {
-  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken } = options;
+  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken, oauthHandler } = options;
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null);
+    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null, oauthHandler);
   });
 
   // Use noServer mode so we can authenticate WS upgrades
@@ -137,6 +139,7 @@ async function handleRequest(
   staticDir: string | undefined,
   agentConnected: (() => boolean) | undefined,
   accessToken: string | null,
+  oauthHandler?: OAuthHandler,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   const path = url.pathname;
@@ -162,6 +165,11 @@ async function handleRequest(
   // Auth-exempt routes
   if (path === "/api/health") {
     return handleApi(req, res, path, store, onIntent, agentConnected);
+  }
+
+  // OAuth callback (public - redirected from OAuth provider)
+  if (path === "/api/oauth/callback" && oauthHandler) {
+    return handleOAuthCallback(req, res, oauthHandler);
   }
 
   // Login routes
@@ -190,6 +198,11 @@ async function handleRequest(
       res.end(getLoginPageHtml());
       return;
     }
+  }
+
+  // OAuth init (authenticated)
+  if (path === "/api/oauth/init" && oauthHandler) {
+    return handleOAuthInit(req, res, oauthHandler);
   }
 
   // API routes
@@ -356,6 +369,124 @@ async function handleApi(
 
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "not found" }));
+}
+
+async function handleOAuthInit(
+  req: IncomingMessage,
+  res: ServerResponse,
+  oauthHandler: OAuthHandler,
+): Promise<void> {
+  if (req.method !== "POST") {
+    res.writeHead(405, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "method not allowed" }));
+    return;
+  }
+
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    const provider = data.provider as string | undefined;
+    const customName = data.customName as string | undefined;
+
+    if (!provider) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "provider is required" }));
+      return;
+    }
+
+    const result = oauthHandler.initOAuth(provider, customName);
+    json(res, result);
+  } catch (error) {
+    console.error("[oauth] Init failed:", error);
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ 
+      error: error instanceof Error ? error.message : "OAuth init failed" 
+    }));
+  }
+}
+
+async function handleOAuthCallback(
+  req: IncomingMessage,
+  res: ServerResponse,
+  oauthHandler: OAuthHandler,
+): Promise<void> {
+  if (req.method !== "GET") {
+    res.writeHead(405, { "Content-Type": "text/html" });
+    res.end("Method not allowed");
+    return;
+  }
+
+  const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+
+  if (!code || !state) {
+    res.writeHead(400, { "Content-Type": "text/html" });
+    res.end(getOAuthResultPage(false, "Missing code or state parameter"));
+    return;
+  }
+
+  try {
+    const result = await oauthHandler.handleCallback(code, state);
+    
+    if (result.success) {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(getOAuthResultPage(true));
+    } else {
+      res.writeHead(400, { "Content-Type": "text/html" });
+      res.end(getOAuthResultPage(false, result.error));
+    }
+  } catch (error) {
+    console.error("[oauth] Callback failed:", error);
+    res.writeHead(500, { "Content-Type": "text/html" });
+    res.end(getOAuthResultPage(false, error instanceof Error ? error.message : "Unknown error"));
+  }
+}
+
+function getOAuthResultPage(success: boolean, error?: string): string {
+  if (success) {
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Authentication Successful</title>
+  <style>
+    body { font-family: system-ui; text-align: center; padding: 50px; }
+    .success { color: #22c55e; font-size: 24px; margin-bottom: 20px; }
+    button { padding: 12px 24px; font-size: 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="success">✓ Authentication Successful</div>
+  <p>You can close this window now.</p>
+  <button onclick="window.close()">Close Window</button>
+  <script>
+    // Auto-close after 2 seconds
+    setTimeout(() => window.close(), 2000);
+  </script>
+</body>
+</html>
+    `;
+  } else {
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Authentication Failed</title>
+  <style>
+    body { font-family: system-ui; text-align: center; padding: 50px; }
+    .error { color: #ef4444; font-size: 24px; margin-bottom: 20px; }
+    .message { color: #666; margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <div class="error">✗ Authentication Failed</div>
+  <div class="message">${error || "Unknown error"}</div>
+  <p>Please try again or contact support.</p>
+</body>
+</html>
+    `;
+  }
 }
 
 async function serveStatic(

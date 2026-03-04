@@ -12,6 +12,7 @@ import { seedDefaults, checkAuthStatus } from "./defaults.js";
 import { SettingsHandler } from "./settings-handler.js";
 import { ChatHandler } from "./chat-handler.js";
 import { SlackHandler } from "./slack-handler.js";
+import { OAuthHandler } from "./oauth-handler.js";
 import { initAccessToken, formatToken } from "./auth.js";
 
 function parseArgs(args: string[]) {
@@ -101,6 +102,9 @@ async function main() {
   // Create slack handler
   const slackHandler = new SlackHandler({ stateDir, store });
 
+  // Create OAuth handler
+  const oauthHandler = new OAuthHandler();
+
   // 4. Create agent handler (syncs disk → store after intents)
   const agentHandler = new AgentHandler({
     agentClient,
@@ -122,6 +126,7 @@ async function main() {
     store,
     staticDir,
     accessToken,
+    oauthHandler,
     agentConnected: () => agentStarted,
     onConnect: () => {
       // Refresh settings state when a client connects (catches external changes)
