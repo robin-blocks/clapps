@@ -8,6 +8,7 @@ import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
+
 import { AgentClient } from "./agent-client.js";
 import { AgentHandler } from "./agent-handler.js";
 import { StateStore } from "./state-store.js";
@@ -16,6 +17,7 @@ import { seedDefaults, checkAuthStatus } from "./defaults.js";
 import { SettingsHandler } from "./settings-handler.js";
 import { ChatHandler } from "./chat-handler.js";
 import { SlackHandler } from "./slack-handler.js";
+import { OAuthHandler } from "./oauth-handler.js";
 import { initAccessToken, formatToken } from "./auth.js";
 
 function parseArgs(args: string[]) {
@@ -116,6 +118,9 @@ async function main() {
     },
   });
 
+  // Create OAuth handler
+  const oauthHandler = new OAuthHandler();
+
   // 4. Create agent handler (syncs disk → store after intents)
   const agentHandler = new AgentHandler({
     agentClient,
@@ -137,6 +142,7 @@ async function main() {
     store,
     staticDir,
     accessToken,
+    oauthHandler,
     agentConnected: () => agentStarted,
     onConnect: () => {
       // Refresh settings state when a client connects (catches external changes)
@@ -173,6 +179,7 @@ async function main() {
     console.log("\nShutting down...");
     clearInterval(refreshInterval);
     server.close();
+    oauthHandler.stop();
     agentClient.stop();
     chatAgentClient.stop();
     process.exit(0);

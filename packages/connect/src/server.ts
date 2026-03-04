@@ -12,6 +12,7 @@ import {
   setSessionCookie,
   getLoginPageHtml,
 } from "./auth.js";
+import { OAuthHandler } from "./oauth-handler.js";
 
 export interface ServerOptions {
   port: number;
@@ -21,6 +22,7 @@ export interface ServerOptions {
   agentConnected?: () => boolean;
   onConnect?: () => void; // called when a client connects (for state refresh)
   accessToken?: string | null; // null = no auth
+  oauthHandler?: OAuthHandler;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -44,10 +46,10 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export function startServer(options: ServerOptions): { close: () => void } {
-  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken } = options;
+  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken, oauthHandler } = options;
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null);
+    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null, oauthHandler);
   });
 
   // Use noServer mode so we can authenticate WS upgrades
@@ -137,6 +139,7 @@ async function handleRequest(
   staticDir: string | undefined,
   agentConnected: (() => boolean) | undefined,
   accessToken: string | null,
+  oauthHandler?: OAuthHandler,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   const path = url.pathname;
@@ -190,6 +193,11 @@ async function handleRequest(
       res.end(getLoginPageHtml());
       return;
     }
+  }
+
+  // OAuth init (authenticated)
+  if (path === "/api/oauth/init" && oauthHandler) {
+    return handleOAuthInit(req, res, oauthHandler);
   }
 
   // API routes
@@ -356,6 +364,40 @@ async function handleApi(
 
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "not found" }));
+}
+
+async function handleOAuthInit(
+  req: IncomingMessage,
+  res: ServerResponse,
+  oauthHandler: OAuthHandler,
+): Promise<void> {
+  if (req.method !== "POST") {
+    res.writeHead(405, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "method not allowed" }));
+    return;
+  }
+
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    const provider = data.provider as string | undefined;
+    const customName = data.customName as string | undefined;
+
+    if (!provider) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "provider is required" }));
+      return;
+    }
+
+    const result = oauthHandler.initOAuth(provider, customName);
+    json(res, result);
+  } catch (error) {
+    console.error("[oauth] Init failed:", error);
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ 
+      error: error instanceof Error ? error.message : "OAuth init failed" 
+    }));
+  }
 }
 
 async function serveStatic(
