@@ -4,6 +4,10 @@ import { resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+
+const execAsync = promisify(exec);
 import { AgentClient } from "./agent-client.js";
 import { AgentHandler } from "./agent-handler.js";
 import { StateStore } from "./state-store.js";
@@ -98,8 +102,19 @@ async function main() {
   // Create chat handler (uses dedicated chat and title sessions)
   const chatHandler = new ChatHandler({ stateDir, store, agentClient: chatAgentClient, titleAgentClient });
 
-  // Create slack handler
-  const slackHandler = new SlackHandler({ stateDir, store });
+  // Create slack handler (with deployment-specific config sync)
+  const slackHandler = new SlackHandler({
+    stateDir,
+    store,
+    onConfigChanged: async () => {
+      const rootConfig = resolve(homedir(), ".openclaw", "openclaw.json");
+      await execAsync(
+        `cp ${rootConfig} /home/openclaw/.openclaw/openclaw.json && chown openclaw:openclaw /home/openclaw/.openclaw/openclaw.json`,
+      );
+      await execAsync("systemctl restart openclaw", { timeout: 10000 });
+      console.log("[slack] Config synced to gateway user and service restarted");
+    },
+  });
 
   // 4. Create agent handler (syncs disk → store after intents)
   const agentHandler = new AgentHandler({

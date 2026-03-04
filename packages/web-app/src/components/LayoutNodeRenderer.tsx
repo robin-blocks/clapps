@@ -1,63 +1,6 @@
 import type { LayoutNode } from "@clapps/core";
-import type { ComponentType, ReactNode } from "react";
-import {
-  Column,
-  Row,
-  Heading,
-  IntentButton,
-  Icon,
-  List,
-  ListItem,
-  Conditional,
-  Skeleton,
-  MarkdownContent,
-  Card,
-  TextInput,
-  IntentForm,
-  ProviderList,
-  SessionList,
-  ChatLayout,
-  ChatMessages,
-  ChatInput,
-  AccountCard,
-  AccountEditor,
-  ChannelList,
-  ChannelEditor,
-  PolicySelector,
-  FeatureToggles,
-  SlashCommandConfig,
-  ConnectionStatus,
-} from "./primitives";
-
-/** Map component names from the DSL to React components */
-const componentMap: Record<string, ComponentType<any>> = {
-  Column,
-  Row,
-  Heading,
-  IntentButton,
-  Icon,
-  List,
-  ListItem,
-  Conditional,
-  Skeleton,
-  MarkdownContent,
-  Card,
-  TextInput,
-  IntentForm,
-  ProviderList,
-  SessionList,
-  ChatLayout,
-  ChatMessages,
-  ChatInput,
-  AccountCard,
-  AccountEditor,
-  ChannelList,
-  ChannelEditor,
-  PolicySelector,
-  FeatureToggles,
-  SlashCommandConfig,
-  ConnectionStatus,
-};
+import type { ReactNode } from "react";
+import { componentMap } from "./_component-map";
 
 interface LayoutNodeRendererProps {
   node: LayoutNode;
