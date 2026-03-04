@@ -76,18 +76,27 @@ async function main() {
     onError: (err) => console.error("[acp:chat]", err.message),
   });
 
+  // 5. Start separate ACP subprocess for title generation (isolated session)
+  const titleSession = "agent:main:clapps-title";
+  const titleAgentClient = new AgentClient({
+    session: titleSession,
+    agentToken,
+    onError: (err) => console.error("[acp:title]", err.message),
+  });
+
   let agentStarted = false;
   try {
     await agentClient.start();
     await chatAgentClient.start();
+    await titleAgentClient.start();
     agentStarted = true;
   } catch (err) {
     console.error(`⚠️  ACP failed to start: ${err instanceof Error ? err.message : err}`);
     console.error("   Intent processing will not work until ACP is available.");
   }
 
-  // Create chat handler (uses dedicated chat session)
-  const chatHandler = new ChatHandler({ stateDir, store, agentClient: chatAgentClient });
+  // Create chat handler (uses dedicated chat and title sessions)
+  const chatHandler = new ChatHandler({ stateDir, store, agentClient: chatAgentClient, titleAgentClient });
 
   // Create slack handler
   const slackHandler = new SlackHandler({ stateDir, store });

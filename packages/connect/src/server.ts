@@ -28,7 +28,15 @@ const MIME_TYPES: Record<string, string> = {
   ".js": "text/javascript",
   ".css": "text/css",
   ".json": "application/json",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".csv": "text/csv",
+  ".pdf": "application/pdf",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
   ".woff": "font/woff",
@@ -310,6 +318,40 @@ async function handleApi(
       agent: agentConnected ? agentConnected() : false,
     });
     return;
+  }
+
+  // GET /api/chat-assets/:sessionKey/:fileName
+  const assetMatch = path.match(/^\/api\/chat-assets\/([^/]+)\/([^/]+)$/);
+  if (assetMatch && req.method === "GET") {
+    const { homedir } = await import("node:os");
+    const sessionKey = decodeURIComponent(assetMatch[1]);
+    const fileName = decodeURIComponent(assetMatch[2]);
+
+    if (!/^session-\d+$/.test(sessionKey) || fileName.includes("..") || fileName.includes("/")) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "invalid asset path" }));
+      return;
+    }
+
+    const assetPath = resolve(homedir(), ".openclaw", "workspace", "chat-sessions", "assets", sessionKey, fileName);
+    if (!existsSync(assetPath)) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "asset not found" }));
+      return;
+    }
+
+    try {
+      const content = await readFile(assetPath);
+      const ext = extname(assetPath);
+      const mime = MIME_TYPES[ext] ?? "application/octet-stream";
+      res.writeHead(200, { "Content-Type": mime, "Cache-Control": "private, max-age=31536000, immutable" });
+      res.end(content);
+      return;
+    } catch {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "failed to read asset" }));
+      return;
+    }
   }
 
   res.writeHead(404, { "Content-Type": "application/json" });

@@ -558,6 +558,10 @@ export class SlackHandler {
       status: { connected: false, accounts: [] },
       pairings: [],
       loading: false,
+      showAccountEditor: false,
+      editingAccount: null,
+      saving: false,
+      saveError: undefined,
     };
   }
 }

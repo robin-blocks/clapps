@@ -9,6 +9,24 @@ export interface ChatHandlerOptions {
   stateDir: string;
   store: StateStore;
   agentClient: AgentClient;
+  titleAgentClient: AgentClient;
+}
+
+interface ChatAttachment {
+  id: string;
+  type: "image" | "file";
+  name: string;
+  mimeType: string;
+  size: number;
+  path: string;
+  url: string;
+}
+
+interface PendingAttachment {
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  dataUrl: string;
 }
 
 interface Message {
@@ -16,6 +34,7 @@ interface Message {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: string;
+  attachments?: ChatAttachment[];
 }
 
 interface Session {
@@ -32,6 +51,7 @@ interface ChatState {
   activeSession: string | null;
   messages: Message[];
   loading: boolean;
+  loadingText?: string;
   loadingOlder: boolean;
   loadedCount: number;
   hasMore: boolean;
@@ -43,11 +63,13 @@ export class ChatHandler {
   private stateDir: string;
   private store: StateStore;
   private agentClient: AgentClient;
+  private titleAgentClient: AgentClient;
   private sessionsDir: string;
 
   constructor(options: ChatHandlerOptions) {
     this.stateDir = options.stateDir;
     this.store = options.store;
+    this.titleAgentClient = options.titleAgentClient;
     this.agentClient = options.agentClient;
     this.sessionsDir = resolve(homedir(), ".openclaw", "workspace", "chat-sessions");
     
@@ -65,11 +87,14 @@ export class ChatHandler {
         return true;
       }
       case "chat.send": {
-        const text = intent.payload.text;
-        if (typeof text !== "string" || text.trim().length === 0) {
+        const text = typeof intent.payload.text === "string" ? intent.payload.text.trim() : "";
+        const attachments = Array.isArray(intent.payload.attachments)
+          ? (intent.payload.attachments as PendingAttachment[])
+          : [];
+        if (!text && attachments.length === 0) {
           return true;
         }
-        this.sendMessage(text.trim());
+        this.sendMessage(text, attachments);
         return true;
       }
       case "chat.newSession": {
@@ -130,7 +155,7 @@ export class ChatHandler {
   }
 
   /** Send a message to the active session */
-  private sendMessage(text: string): void {
+  private sendMessage(text: string, pendingAttachments: PendingAttachment[] = []): void {
     const state = this.getCurrentState();
     let { sessions, activeSession } = state;
 
@@ -143,6 +168,7 @@ export class ChatHandler {
 
     const activeMeta = sessions.find((s) => s.key === activeSession)!;
     const allBefore = this.loadSessionMessages(activeSession);
+    const attachments = this.persistAttachments(activeSession, pendingAttachments);
 
     // Add user message
     const userMessage: Message = {
@@ -150,38 +176,64 @@ export class ChatHandler {
       role: "user",
       content: text,
       timestamp: new Date().toISOString(),
+      attachments,
     };
 
     const allWithUser = [...allBefore, userMessage];
-    this.saveSessionMessages(activeSession, allWithUser);
-
     const loadedCount = Math.min(allWithUser.length, Math.max(state.loadedCount, PAGE_SIZE) + 1);
     const messages = allWithUser.slice(-loadedCount);
 
-    sessions = this.refreshSessionsFromFiles(sessions);
-
-    // Update state with user message and loading
+    // Push state IMMEDIATELY - don't wait for disk I/O
     this.pushState({
       sessions,
       activeSession,
       messages,
       loading: true,
+      loadingText: "Thinking...",
       loadingOlder: false,
       loadedCount,
       hasMore: allWithUser.length > loadedCount,
     });
 
+    // Save to disk asynchronously (non-blocking)
+    this.saveSessionMessages(activeSession, allWithUser);
+
+    const modelPrompt = this.buildPromptWithAttachments(text, attachments);
+
     // Send to OpenClaw and get response
-    this.getAssistantResponse(activeSession, activeMeta.acpSessionKey, text, allWithUser, loadedCount);
+    this.getAssistantResponse(activeSession, activeMeta.acpSessionKey, modelPrompt, allWithUser, loadedCount, text || "Image message");
   }
 
   /** Get assistant response from OpenClaw via ACP */
-  private async getAssistantResponse(sessionKey: string, acpSessionKey: string, userText: string, allCurrentMessages: Message[], loadedCountBefore: number): Promise<void> {
+  private async getAssistantResponse(
+    sessionKey: string,
+    acpSessionKey: string,
+    promptText: string,
+    allCurrentMessages: Message[],
+    loadedCountBefore: number,
+    titleSeedText: string,
+  ): Promise<void> {
     try {
-      console.log(`[chat] Sending message to ACP: "${userText.slice(0, 50)}..."`);
+      console.log(`[chat] Sending message to ACP: "${promptText.slice(0, 50)}..."`);
       
       // Send message via ACP and get response
-      const response = await this.agentClient.sendMessage(userText, acpSessionKey);
+      let thoughtBuffer = "";
+      let lastUiUpdateAt = 0;
+      const response = await this.agentClient.sendMessage(promptText, acpSessionKey, (update) => {
+        const now = Date.now();
+        if (update.kind === "thought") {
+          thoughtBuffer = `${thoughtBuffer}${update.text}`.slice(-240);
+        }
+        const loadingText = update.kind === "status"
+          ? update.text.slice(0, 180)
+          : (thoughtBuffer || "Thinking...");
+
+        if (now - lastUiUpdateAt < 150) return;
+        lastUiUpdateAt = now;
+
+        const state = this.getCurrentState();
+        this.pushState({ ...state, loading: true, loadingText });
+      });
       
       console.log(`[chat] Got response (${response?.length ?? 0} chars): "${response?.slice(0, 100)}..."`);
       
@@ -199,11 +251,7 @@ export class ChatHandler {
       const allUpdatedMessages = [...allCurrentMessages, assistantMessage];
 
       this.saveSessionMessages(sessionKey, allUpdatedMessages);
-      const sessions = this.refreshSessionsFromFiles(this.loadSessions()).map((s) =>
-        s.key === sessionKey && !s.title
-          ? { ...s, title: this.generateTitle(userText) }
-          : s,
-      );
+      const sessions = this.refreshSessionsFromFiles(this.loadSessions());
       this.saveSessions(sessions);
 
       const loadedCount = Math.min(allUpdatedMessages.length, loadedCountBefore + 1);
@@ -214,10 +262,17 @@ export class ChatHandler {
         activeSession: sessionKey,
         messages,
         loading: false,
+        loadingText: undefined,
         loadingOlder: false,
         loadedCount,
         hasMore: allUpdatedMessages.length > loadedCount,
       });
+
+      // Generate smart title after first exchange
+      const currentSession = sessions.find(s => s.key === sessionKey);
+      if (currentSession && allUpdatedMessages.length === 2) {
+        this.generateSessionTitle(sessionKey, titleSeedText, assistantContent);
+      }
 
     } catch (err) {
       console.error(`[chat] Error getting response: ${err}`);
@@ -239,6 +294,7 @@ export class ChatHandler {
         activeSession: sessionKey,
         messages: allUpdatedMessages.slice(-loadedCount),
         loading: false,
+        loadingText: undefined,
         loadingOlder: false,
         loadedCount,
         hasMore: allUpdatedMessages.length > loadedCount,
@@ -343,7 +399,135 @@ export class ChatHandler {
     });
   }
 
-  /** Generate a title from the first message */
+  /** Generate a smart title using LLM based on first exchange */
+  private async generateSessionTitle(sessionKey: string, userMessage: string, assistantMessage: string): Promise<void> {
+    try {
+      console.log(`[chat] Generating title for session ${sessionKey}...`);
+      
+      const prompt = `Based on this conversation exchange, generate a concise 3-6 word title that captures the topic or intent.
+
+User: ${userMessage.slice(0, 200)}
+Assistant: ${assistantMessage.slice(0, 200)}
+
+Reply with ONLY the title, no quotes, no explanations, no punctuation at the end.`;
+
+      // Use dedicated title generation session
+      const titleSessionKey = "agent:main:clapps-title";
+      const generatedTitle = await this.titleAgentClient.sendMessage(prompt, titleSessionKey);
+      
+      if (!generatedTitle) {
+        console.log(`[chat] No title generated, keeping default`);
+        return;
+      }
+
+      // Clean up the response (remove quotes, extra whitespace, trailing punctuation)
+      const cleanTitle = generatedTitle
+        .replace(/^["']|["']$/g, "")
+        .replace(/^\s*\[\[[^\]]+\]\]\s*/u, "")
+        .trim()
+        .replace(/[.!?]+$/, "")
+        .slice(0, 60);
+
+      console.log(`[chat] Generated title: "${cleanTitle}"`);
+
+      // Update session metadata
+      const sessions = this.loadSessions();
+      const updated = sessions.map(s => 
+        s.key === sessionKey 
+          ? { ...s, title: cleanTitle }
+          : s
+      );
+      this.saveSessions(updated);
+
+      // Push updated state
+      const state = this.getCurrentState();
+      this.pushState({
+        ...state,
+        sessions: this.refreshSessionsFromFiles(updated),
+      });
+
+    } catch (err) {
+      console.error(`[chat] Error generating title: ${err}`);
+      // Non-critical, don't fail the chat
+    }
+  }
+
+  private persistAttachments(sessionKey: string, pending: PendingAttachment[]): ChatAttachment[] {
+    if (!pending.length) return [];
+
+    const assetsDir = resolve(this.sessionsDir, "assets", sessionKey);
+    mkdirSync(assetsDir, { recursive: true });
+
+    const out: ChatAttachment[] = [];
+
+    pending.forEach((item, index) => {
+      if (!item?.dataUrl || typeof item.dataUrl !== "string") return;
+      const match = item.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) return;
+
+      try {
+        const mimeType = item.mimeType || match[1] || "application/octet-stream";
+        const base64 = match[2];
+        const buffer = Buffer.from(base64, "base64");
+        const ext = this.extensionForMime(mimeType, item.name);
+        const id = `att-${Date.now()}-${index}`;
+        const fileName = `${id}.${ext}`;
+        const filePath = resolve(assetsDir, fileName);
+
+        writeFileSync(filePath, buffer);
+
+        out.push({
+          id,
+          type: mimeType.startsWith("image/") ? "image" : "file",
+          name: item.name || fileName,
+          mimeType,
+          size: item.size ?? buffer.byteLength,
+          path: filePath,
+          url: `/api/chat-assets/${encodeURIComponent(sessionKey)}/${encodeURIComponent(fileName)}`,
+        });
+      } catch {
+        // skip failed attachment
+      }
+    });
+
+    return out;
+  }
+
+  private extensionForMime(mimeType: string, name?: string): string {
+    const byMime: Record<string, string> = {
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+      "image/gif": "gif",
+      "application/pdf": "pdf",
+      "text/plain": "txt",
+      "text/markdown": "md",
+      "application/json": "json",
+      "text/csv": "csv",
+    };
+
+    if (byMime[mimeType]) return byMime[mimeType];
+
+    const fromName = name?.split(".").pop()?.toLowerCase();
+    return fromName && /^[a-z0-9]{1,8}$/.test(fromName) ? fromName : "bin";
+  }
+
+  private buildPromptWithAttachments(text: string, attachments: ChatAttachment[]): string {
+    if (!attachments.length) return text;
+
+    const imageLines = attachments.filter((a) => a.type === "image").map((a) => `- ${a.path}`).join("\n");
+    const fileLines = attachments.filter((a) => a.type === "file").map((a) => `- ${a.path}`).join("\n");
+
+    const body = text || "Please review the attached items.";
+    const blocks: string[] = [body];
+
+    if (imageLines) blocks.push(`[Attached images]\n${imageLines}`);
+    if (fileLines) blocks.push(`[Attached files]\n${fileLines}`);
+
+    return blocks.join("\n\n");
+  }
+
+  /** Generate a title from the first message (fallback) */
   private generateTitle(text: string): string {
     const cleaned = text.replace(/\n/g, " ").trim();
     if (cleaned.length <= 40) return cleaned;
@@ -396,7 +580,7 @@ export class ChatHandler {
       const messages = this.loadSessionMessages(s.key);
       const firstUser = messages.find((m) => m.role === "user")?.content ?? "";
       const last = messages[messages.length - 1];
-      const preview = last?.content?.slice(0, 100) ?? "";
+      const preview = (last?.content?.slice(0, 100) || (last?.attachments?.length ? `📷 ${last.attachments.length} image${last.attachments.length > 1 ? "s" : ""}` : ""));
       const updatedAt = last?.timestamp ?? s.updatedAt;
       const title = s.title || this.generateTitle(firstUser || "New conversation");
 
@@ -501,6 +685,7 @@ export class ChatHandler {
             activeSession: typeof chat.activeSession === "string" ? chat.activeSession : null,
             messages: Array.isArray(chat.messages) ? chat.messages : [],
             loading: Boolean(chat.loading),
+            loadingText: typeof chat.loadingText === "string" ? chat.loadingText : undefined,
             loadingOlder: Boolean(chat.loadingOlder),
             loadedCount: Number(chat.loadedCount ?? (Array.isArray(chat.messages) ? chat.messages.length : 0)),
             hasMore: Boolean(chat.hasMore),
@@ -520,6 +705,7 @@ export class ChatHandler {
       activeSession,
       messages,
       loading: false,
+      loadingText: undefined,
       loadingOlder: false,
       loadedCount: messages.length,
       hasMore: activeSession ? this.loadSessionMessages(activeSession).length > messages.length : false,

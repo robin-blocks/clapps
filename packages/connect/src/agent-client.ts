@@ -13,6 +13,11 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
+export interface StreamUpdate {
+  kind: "thought" | "status";
+  text: string;
+}
+
 /** Communicate with the local OpenClaw agent via ACP (Agent Client Protocol) subprocess */
 export class AgentClient {
   private session: string;
@@ -24,6 +29,7 @@ export class AgentClient {
   private pending = new Map<number, PendingRequest>();
   private started = false;
   private loadedSessions = new Set<string>();
+  private streamListeners = new Map<string, (update: StreamUpdate) => void>();
 
   constructor(options: AgentClientOptions) {
     this.session = options.session;
@@ -82,7 +88,7 @@ export class AgentClient {
   }
 
   /** Send a chat message to the agent and get a response */
-  async sendMessage(text: string, sessionKey?: string): Promise<string> {
+  async sendMessage(text: string, sessionKey?: string, onStreamUpdate?: (update: StreamUpdate) => void): Promise<string> {
     if (!this.proc) {
       throw new Error("AgentClient not started — call start() first");
     }
@@ -90,14 +96,26 @@ export class AgentClient {
     const targetSession = sessionKey ?? this.session;
     await this.ensureSessionLoaded(targetSession);
 
-    const before = await this.readLatestAssistantText(targetSession) ?? await this.readLatestAssistantText(this.session);
+    const sentAt = Date.now();
+    const before = (await this.readLatestAssistantMessage(targetSession)) ?? (await this.readLatestAssistantMessage(this.session));
 
     console.log(`[acp:sendMessage] Sending to session ${targetSession}: "${text.slice(0, 50)}..."`);
 
-    const result = (await this.rpc("session/prompt", {
-      sessionId: targetSession,
-      prompt: [{ type: "text", text }],
-    })) as { content?: Array<{ text?: string }> } | null;
+    if (onStreamUpdate) {
+      this.streamListeners.set(targetSession, onStreamUpdate);
+    }
+
+    let result: { content?: Array<{ text?: string }> } | null = null;
+    try {
+      result = (await this.rpc("session/prompt", {
+        sessionId: targetSession,
+        prompt: [{ type: "text", text }],
+      })) as { content?: Array<{ text?: string }> } | null;
+    } finally {
+      if (onStreamUpdate) {
+        this.streamListeners.delete(targetSession);
+      }
+    }
 
     console.log(`[acp:sendMessage] Got result:`, JSON.stringify(result)?.slice(0, 200));
 
@@ -107,23 +125,23 @@ export class AgentClient {
         .map((c: { text?: string }) => c.text)
         .filter(Boolean);
       const joined = texts.join("\n").trim();
-      if (joined) return joined;
+      if (joined && !this.isControlReply(joined)) return joined;
     }
 
     // 2) Fallback: pull latest assistant text from session logs (target first, then base session)
-    return await this.readAssistantReplyFromSessionLog(targetSession, before);
+    return await this.readAssistantReplyFromSessionLog(targetSession, before?.text, sentAt);
   }
 
-  private async readAssistantReplyFromSessionLog(sessionKey: string, previous?: string): Promise<string> {
+  private async readAssistantReplyFromSessionLog(sessionKey: string, previous?: string, sentAtMs?: number): Promise<string> {
     const deadline = Date.now() + 10_000;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
     while (Date.now() < deadline) {
-      const candidate = await this.readLatestAssistantText(sessionKey);
-      if (candidate && candidate !== previous) return candidate;
+      const candidate = await this.readLatestAssistantMessage(sessionKey);
+      if (this.isUsableCandidate(candidate?.text, previous, sentAtMs, candidate?.timestampMs)) return candidate!.text;
 
-      const fallback = await this.readLatestAssistantText(this.session);
-      if (fallback && fallback !== previous) return fallback;
+      const fallback = await this.readLatestAssistantMessage(this.session);
+      if (this.isUsableCandidate(fallback?.text, previous, sentAtMs, fallback?.timestampMs)) return fallback!.text;
 
       await sleep(500);
     }
@@ -131,7 +149,19 @@ export class AgentClient {
     return "";
   }
 
-  private async readLatestAssistantText(sessionKey: string): Promise<string> {
+  private isUsableCandidate(text?: string, previous?: string, sentAtMs?: number, candidateTs?: number): boolean {
+    if (!text || text === previous) return false;
+    if (this.isControlReply(text)) return false;
+    if (sentAtMs && candidateTs && candidateTs < sentAtMs - 1000) return false;
+    return true;
+  }
+
+  private isControlReply(text: string): boolean {
+    const normalized = text.trim().toLowerCase();
+    return normalized.startsWith("model reset to default") || normalized.startsWith("model set to ");
+  }
+
+  private async readLatestAssistantMessage(sessionKey: string): Promise<{ text: string; timestampMs: number } | null> {
     try {
       const { homedir } = await import("node:os");
       const { resolve } = await import("node:path");
@@ -141,7 +171,7 @@ export class AgentClient {
       const sessionsRaw = await readFile(sessionsPath, "utf-8");
       const sessions = JSON.parse(sessionsRaw) as Record<string, { sessionId?: string }>;
       const meta = sessions[sessionKey];
-      if (!meta?.sessionId) return "";
+      if (!meta?.sessionId) return null;
 
       const jsonlPath = resolve(homedir(), ".openclaw", "agents", "main", "sessions", `${meta.sessionId}.jsonl`);
       const jsonlRaw = await readFile(jsonlPath, "utf-8");
@@ -161,7 +191,11 @@ export class AgentClient {
             .filter(Boolean);
 
           const joined = texts.join("\n").trim();
-          if (joined) return joined;
+          if (!joined) continue;
+
+          const tsRaw = msg.timestamp ?? row.timestamp ?? Date.now();
+          const ts = typeof tsRaw === "number" ? tsRaw : Date.parse(tsRaw);
+          return { text: joined, timestampMs: Number.isFinite(ts) ? ts : Date.now() };
         } catch {
           // ignore malformed line
         }
@@ -170,7 +204,7 @@ export class AgentClient {
       console.warn(`[acp:sendMessage] Log read failed: ${(err as Error).message}`);
     }
 
-    return "";
+    return null;
   }
 
   private async ensureSessionLoaded(sessionId: string): Promise<void> {
@@ -256,7 +290,7 @@ export class AgentClient {
   }
 
   private handleLine(line: string): void {
-    let msg: { id?: number; result?: unknown; error?: { message: string } };
+    let msg: { id?: number; method?: string; params?: unknown; result?: unknown; error?: { message: string } };
     try {
       msg = JSON.parse(line);
     } catch {
@@ -264,8 +298,13 @@ export class AgentClient {
       return;
     }
 
-    // Ignore notifications (no id field — like session/update)
-    if (msg.id == null) return;
+    // Notification path (no request id)
+    if (msg.id == null) {
+      if (msg.method === "session/update") {
+        this.handleSessionUpdate(msg.params as Record<string, unknown> | undefined);
+      }
+      return;
+    }
 
     const pending = this.pending.get(msg.id);
     if (!pending) return;
@@ -276,6 +315,52 @@ export class AgentClient {
     } else {
       pending.resolve(msg.result);
     }
+  }
+
+  private handleSessionUpdate(params?: Record<string, unknown>): void {
+    if (!params || typeof params !== "object") return;
+    const sessionId = typeof params.sessionId === "string" ? params.sessionId : undefined;
+    const listener = sessionId
+      ? this.streamListeners.get(sessionId)
+      : (this.streamListeners.size === 1 ? Array.from(this.streamListeners.values())[0] : undefined);
+    if (!listener) return;
+
+    const update = (params.update ?? {}) as Record<string, unknown>;
+    const tag = typeof update.sessionUpdate === "string" ? update.sessionUpdate : "";
+
+    const getText = (): string => {
+      const content = update.content;
+      if (typeof content === "string") return content;
+      if (content && typeof content === "object" && typeof (content as { text?: unknown }).text === "string") {
+        return (content as { text: string }).text;
+      }
+      if (typeof update.text === "string") return update.text;
+      if (typeof update.title === "string" && typeof update.status === "string") return `${update.title} (${update.status})`;
+      if (typeof update.title === "string") return update.title;
+      if (typeof update.summary === "string") return update.summary;
+      return "";
+    };
+
+    const text = getText().trim();
+    if (!text) return;
+
+    if (tag === "agent_thought_chunk") {
+      listener({ kind: "thought", text });
+      return;
+    }
+
+    if (tag === "agent_message_chunk") {
+      listener({ kind: "status", text: `Drafting: ${text}` });
+      return;
+    }
+
+    if (tag === "tool_call" || tag === "tool_call_update" || tag === "session_info_update" || tag === "plan") {
+      listener({ kind: "status", text });
+      return;
+    }
+
+    // Fallback: surface any textual update so the UI doesn't stay static.
+    listener({ kind: "status", text });
   }
 
   private rpc(method: string, params: Record<string, unknown>): Promise<unknown> {

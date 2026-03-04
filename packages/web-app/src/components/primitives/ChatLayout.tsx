@@ -13,11 +13,22 @@ interface Session {
   messageCount: number;
 }
 
+interface ChatAttachment {
+  id: string;
+  type: "image" | "file";
+  name: string;
+  mimeType: string;
+  size: number;
+  path: string;
+  url: string;
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: string;
+  attachments?: ChatAttachment[];
 }
 
 interface ChatState {
@@ -25,6 +36,7 @@ interface ChatState {
   activeSession: string | null;
   messages: Message[];
   loading: boolean;
+  loadingText?: string;
   loadingOlder?: boolean;
   hasMore?: boolean;
 }
@@ -35,6 +47,7 @@ export function ChatLayout() {
   const activeSession = chatState?.activeSession;
   const messages = chatState?.messages ?? [];
   const loading = chatState?.loading ?? false;
+  const loadingText = chatState?.loadingText ?? "Thinking...";
   const loadingOlder = chatState?.loadingOlder ?? false;
   const hasMore = chatState?.hasMore ?? false;
 
@@ -77,8 +90,8 @@ export function ChatLayout() {
     setTimeout(() => setDeletingSession(null), 1000);
   };
 
-  const handleSendMessage = (text: string) => {
-    emit("chat.send", { text });
+  const handleSendMessage = (text: string, attachments?: Array<{ name: string; mimeType: string; size: number; dataUrl: string }>) => {
+    emit("chat.send", { text, attachments: attachments ?? [] });
   };
 
   const handleLoadOlder = () => {
@@ -196,6 +209,7 @@ export function ChatLayout() {
         <ChatMessages
           messages={messages}
           loading={loading}
+          loadingText={loadingText}
           hasMore={hasMore}
           loadingOlder={loadingOlder}
           onLoadOlder={handleLoadOlder}
