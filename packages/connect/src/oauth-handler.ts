@@ -51,9 +51,21 @@ export class OAuthHandler {
     this.callbackServer = createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
       
+      console.log(`[oauth] Received callback: ${req.method} ${url.pathname}`);
+      
       if (url.pathname === "/auth/callback" && req.method === "GET") {
         const code = url.searchParams.get("code");
         const state = url.searchParams.get("state");
+        const error = url.searchParams.get("error");
+        const errorDescription = url.searchParams.get("error_description");
+
+        console.log(`[oauth] Callback params: code=${code ? 'present' : 'missing'}, state=${state?.substring(0, 10)}..., error=${error}`);
+
+        if (error) {
+          res.writeHead(400, { "Content-Type": "text/html" });
+          res.end(this.getResultPage(false, `OAuth error: ${error} - ${errorDescription || 'No description'}`));
+          return;
+        }
 
         if (!code || !state) {
           res.writeHead(400, { "Content-Type": "text/html" });
@@ -180,6 +192,11 @@ export class OAuthHandler {
 
     // Build OAuth URL based on provider
     const authUrl = this.buildAuthUrl(provider, challenge, state);
+
+    console.log(`[oauth] Generated OAuth URL for ${provider}:`);
+    console.log(`  State: ${state}`);
+    console.log(`  Challenge: ${challenge.substring(0, 20)}...`);
+    console.log(`  URL: ${authUrl}`);
 
     return { authUrl };
   }
