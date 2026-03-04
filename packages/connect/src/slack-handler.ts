@@ -234,6 +234,8 @@ export class SlackHandler {
     const state = this.getCurrentState();
     state.showAccountEditor = true;
     state.editingAccount = null;
+    state.saving = false;
+    state.saveError = undefined;
     this.pushState(state);
   }
 
@@ -242,6 +244,8 @@ export class SlackHandler {
     const account = state.accounts.find((a) => a.id === accountId);
     state.showAccountEditor = true;
     state.editingAccount = account || null;
+    state.saving = false;
+    state.saveError = undefined;
     this.pushState(state);
   }
 
@@ -249,6 +253,8 @@ export class SlackHandler {
     const state = this.getCurrentState();
     state.showAccountEditor = false;
     state.editingAccount = null;
+    state.saving = false;
+    state.saveError = undefined;
     this.pushState(state);
   }
 
