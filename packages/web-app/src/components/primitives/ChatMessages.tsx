@@ -33,10 +33,25 @@ interface ChatMessagesProps {
 export function ChatMessages({ messages, loading, loadingText = "Thinking...", hasMore = false, loadingOlder = false, onLoadOlder }: ChatMessagesProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const isInitialScroll = useRef(true);
+
+  // Reset initial scroll flag when messages clear (session switch)
+  useEffect(() => {
+    if (messages.length === 0) {
+      isInitialScroll.current = true;
+    }
+  }, [messages.length]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    if (isInitialScroll.current && messages.length > 0) {
+      isInitialScroll.current = false;
+      bottomRef.current?.scrollIntoView({ behavior: "instant" });
+      return;
+    }
+
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     if (distanceFromBottom < 200 || loading) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });

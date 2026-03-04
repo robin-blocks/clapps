@@ -1,9 +1,8 @@
-import { useState } from "react";
-import { useIntent } from "@clapps/renderer";
+import { useEffect, useState } from "react";
+import { useClappState, useIntent } from "@clapps/renderer";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, AlertCircle } from "lucide-react";
 
 interface AccountEditorProps {
   account?: {
@@ -14,20 +13,38 @@ interface AccountEditorProps {
     signingSecret?: string;
     webhookPath?: string;
   } | null;
-  saving?: boolean;
-  saveError?: string;
 }
 
-export function AccountEditor({ account, saving, saveError }: AccountEditorProps) {
+export function AccountEditor({ account }: AccountEditorProps) {
   const { emit } = useIntent();
+  const backendSaving = useClappState<boolean>("slack.saving") ?? false;
+  const saveError = useClappState<string | null>("slack.saveError") ?? null;
+  const [saveClicked, setSaveClicked] = useState(false);
+
   const [accountId, setAccountId] = useState(account?.id || "");
-  const [mode, setMode] = useState<"socket" | "http">(account?.mode as any || "socket");
+  const [mode, setMode] = useState<"socket" | "http">((account?.mode as "socket" | "http") || "socket");
   const [botToken, setBotToken] = useState(account?.botToken || "");
   const [appToken, setAppToken] = useState(account?.appToken || "");
   const [signingSecret, setSigningSecret] = useState(account?.signingSecret || "");
   const [webhookPath, setWebhookPath] = useState(account?.webhookPath || "/slack/events");
 
+  const showSaving = saveClicked && backendSaving;
+
+  useEffect(() => {
+    if (!saveClicked) return;
+    if (!backendSaving) {
+      setSaveClicked(false);
+    }
+  }, [saveClicked, backendSaving]);
+
+  useEffect(() => {
+    if (!saveClicked) return;
+    const timer = setTimeout(() => setSaveClicked(false), 15000);
+    return () => clearTimeout(timer);
+  }, [saveClicked]);
+
   const handleSave = () => {
+    setSaveClicked(true);
     emit("slack.saveAccount", {
       accountId: accountId || "default",
       mode,
@@ -38,61 +55,44 @@ export function AccountEditor({ account, saving, saveError }: AccountEditorProps
     });
   };
 
-  const handleCancel = () => {
-    emit("slack.cancelEdit", {});
+  const handleClear = () => {
+    setAccountId("");
+    setMode("socket");
+    setBotToken("");
+    setAppToken("");
+    setSigningSecret("");
+    setWebhookPath("/slack/events");
   };
 
   return (
-    <Card className="p-6 max-w-2xl mx-auto">
+    <Card className="p-6">
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">
-            {account ? "Edit Account" : "Add Account"}
-          </h2>
-          {saving && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Testing connection...</span>
-            </div>
-          )}
-        </div>
-
-        {saveError && (
-          <div className="flex items-start gap-2 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-            <AlertCircle className="h-4 w-4 text-destructive mt-0.5" />
-            <div className="flex-1 text-sm text-destructive">
-              {saveError}
-            </div>
-          </div>
-        )}
-
         <div>
           <label className="text-sm font-medium">Account ID</label>
           <Input
             value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
             placeholder="default"
-            disabled={!!account || saving}
+            disabled={showSaving}
           />
-          <p className="text-xs text-muted-foreground mt-1">
-            Use "default" for main account, or a custom name
-          </p>
         </div>
 
         <div>
           <label className="text-sm font-medium">Mode</label>
           <div className="flex gap-2 mt-2">
             <Button
+              type="button"
               variant={mode === "socket" ? "default" : "outline"}
               onClick={() => setMode("socket")}
-              disabled={saving}
+              disabled={showSaving}
             >
               Socket Mode
             </Button>
             <Button
+              type="button"
               variant={mode === "http" ? "default" : "outline"}
               onClick={() => setMode("http")}
-              disabled={saving}
+              disabled={showSaving}
             >
               HTTP Events API
             </Button>
@@ -106,7 +106,7 @@ export function AccountEditor({ account, saving, saveError }: AccountEditorProps
             onChange={(e) => setBotToken(e.target.value)}
             placeholder="xoxb-..."
             type="password"
-            disabled={saving}
+            disabled={showSaving}
           />
         </div>
 
@@ -118,11 +118,8 @@ export function AccountEditor({ account, saving, saveError }: AccountEditorProps
               onChange={(e) => setAppToken(e.target.value)}
               placeholder="xapp-..."
               type="password"
-              disabled={saving}
+              disabled={showSaving}
             />
-            <p className="text-xs text-muted-foreground mt-1">
-              Requires connections:write scope
-            </p>
           </div>
         )}
 
@@ -133,9 +130,9 @@ export function AccountEditor({ account, saving, saveError }: AccountEditorProps
               <Input
                 value={signingSecret}
                 onChange={(e) => setSigningSecret(e.target.value)}
-                placeholder="Your signing secret"
+                placeholder="Signing secret"
                 type="password"
-                disabled={saving}
+                disabled={showSaving}
               />
             </div>
             <div>
@@ -144,30 +141,24 @@ export function AccountEditor({ account, saving, saveError }: AccountEditorProps
                 value={webhookPath}
                 onChange={(e) => setWebhookPath(e.target.value)}
                 placeholder="/slack/events"
-                disabled={saving}
+                disabled={showSaving}
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Use unique paths for multi-account HTTP
-              </p>
             </div>
           </>
         )}
 
-        <div className="flex gap-2 justify-end pt-4">
-          <Button variant="outline" onClick={handleCancel} disabled={saving}>
-            Cancel
+        <div className="flex gap-2 justify-end pt-2">
+          <Button type="button" variant="outline" onClick={handleClear} disabled={showSaving}>
+            Clear
           </Button>
-          <Button onClick={handleSave} disabled={!botToken || saving}>
-            {saving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Connecting...
-              </>
-            ) : (
-              "Save Account"
-            )}
+          <Button type="button" onClick={handleSave} disabled={!botToken || showSaving}>
+            {showSaving ? "Saving…" : "Save Account"}
           </Button>
         </div>
+
+        {saveError && (
+          <p className="text-xs text-rose-500">{saveError}</p>
+        )}
       </div>
     </Card>
   );

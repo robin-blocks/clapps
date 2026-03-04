@@ -90,9 +90,34 @@ export function ChatLayout() {
     setTimeout(() => setDeletingSession(null), 1000);
   };
 
-  const handleSendMessage = (text: string, attachments?: Array<{ name: string; mimeType: string; size: number; dataUrl: string }>) => {
+  const [pendingMessage, setPendingMessage] = useState<Message | null>(null);
+
+  const handleSendMessage = (
+    text: string,
+    attachments?: Array<{ name: string; mimeType: string; size: number; dataUrl: string }>
+  ) => {
+    if (text.trim()) {
+      setPendingMessage({
+        id: `pending-${Date.now()}`,
+        role: "user",
+        content: text,
+        timestamp: new Date().toISOString(),
+      });
+    }
     emit("chat.send", { text, attachments: attachments ?? [] });
   };
+
+  // Clear pending when server state includes our message
+  useEffect(() => {
+    if (pendingMessage && messages.some(
+      m => m.role === "user" && m.content === pendingMessage.content
+    )) {
+      setPendingMessage(null);
+    }
+  }, [messages, pendingMessage]);
+
+  const displayMessages = pendingMessage ? [...messages, pendingMessage] : messages;
+  const displayLoading = loading || !!pendingMessage;
 
   const handleLoadOlder = () => {
     if (!loadingOlder && hasMore) {
@@ -207,8 +232,8 @@ export function ChatLayout() {
 
         {/* Messages */}
         <ChatMessages
-          messages={messages}
-          loading={loading}
+          messages={displayMessages}
+          loading={displayLoading}
           loadingText={loadingText}
           hasMore={hasMore}
           loadingOlder={loadingOlder}

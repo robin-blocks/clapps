@@ -4,36 +4,22 @@ import { ClappTransport } from "@clapps/transport";
 import type { AppEntry } from "@clapps/core";
 import { HomeScreen } from "./HomeScreen";
 import { ClappRenderer } from "./ClappRenderer";
-import { cn } from "./lib/utils";
 
 function getServerUrl(): string {
   return window.location.origin;
 }
 
-function AppRoutes({ transport }: { transport: ClappTransport }) {
+function AppRoutes({ transport, apps }: { transport: ClappTransport; apps: AppEntry[] }) {
   return (
     <Routes>
-      <Route path="/" element={<AppLauncher transport={transport} />} />
-      <Route path="/apps/:appId" element={<AppView transport={transport} />} />
+      <Route path="/" element={<AppLauncher transport={transport} apps={apps} />} />
+      <Route path="/apps/:appId" element={<AppView transport={transport} apps={apps} />} />
     </Routes>
   );
 }
 
-function AppLauncher({ transport }: { transport: ClappTransport }) {
+function AppLauncher({ transport, apps }: { transport: ClappTransport; apps: AppEntry[] }) {
   const navigate = useNavigate();
-  const [apps, setApps] = useState<AppEntry[]>([]);
-
-  useEffect(() => {
-    const unsub = transport.onApps((newApps) => {
-      setApps(newApps);
-    });
-
-    transport.fetchApps().then(setApps).catch(() => {});
-
-    return () => {
-      unsub();
-    };
-  }, [transport]);
 
   const openApp = (clappId: string) => {
     navigate(`/apps/${clappId}`);
@@ -49,22 +35,9 @@ function AppLauncher({ transport }: { transport: ClappTransport }) {
   );
 }
 
-function AppView({ transport }: { transport: ClappTransport }) {
+function AppView({ transport, apps }: { transport: ClappTransport; apps: AppEntry[] }) {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const [apps, setApps] = useState<AppEntry[]>([]);
-
-  useEffect(() => {
-    const unsub = transport.onApps((newApps) => {
-      setApps(newApps);
-    });
-
-    transport.fetchApps().then(setApps).catch(() => {});
-
-    return () => {
-      unsub();
-    };
-  }, [transport]);
 
   const goHome = () => {
     navigate("/");
@@ -130,11 +103,19 @@ export function App() {
   }
 
   const transport = transportRef.current;
+  const [apps, setApps] = useState<AppEntry[]>([]);
 
   useEffect(() => {
     transport.connect();
 
+    const unsubApps = transport.onApps((newApps) => {
+      setApps(newApps);
+    });
+
+    transport.fetchApps().then(setApps).catch(() => {});
+
     return () => {
+      unsubApps();
       transport.disconnect();
     };
   }, [transport]);
@@ -142,7 +123,7 @@ export function App() {
   return (
     <div className="relative h-screen overflow-hidden bg-background">
       <BrowserRouter>
-        <AppRoutes transport={transport} />
+        <AppRoutes transport={transport} apps={apps} />
       </BrowserRouter>
     </div>
   );
