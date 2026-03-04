@@ -1,6 +1,6 @@
 {
   "name": "@clappstore/connect",
-  "version": "0.7.10",
+  "version": "0.7.21",
   "type": "module",
   "bin": {
     "clapps-connect": "./dist/index.js"

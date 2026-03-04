@@ -8,6 +8,14 @@ import type { StateStore } from "./state-store.js";
 
 const execAsync = promisify(exec);
 
+/** Run `openclaw config set <path> <value>` with proper arg splitting */
+function configSet(pathAndValue: string): Promise<{ stdout: string; stderr: string }> {
+  const eqIdx = pathAndValue.indexOf("=");
+  const cfgPath = pathAndValue.slice(0, eqIdx);
+  const cfgValue = pathAndValue.slice(eqIdx + 1);
+  return execAsync(`openclaw config set ${cfgPath} ${JSON.stringify(cfgValue)}`);
+}
+
 export interface SlackHandlerOptions {
   stateDir: string;
   store: StateStore;
@@ -54,6 +62,7 @@ interface SlackState {
   editingAccount?: SlackAccount | null;
   saving?: boolean;
   saveError?: string;
+  saveSuccess?: string;
 }
 
 export class SlackHandler {
@@ -88,6 +97,9 @@ export class SlackHandler {
         return true;
       case "slack.deleteAccount":
         this.deleteAccount(intent.payload.accountId as string);
+        return true;
+      case "slack.disableAccount":
+        this.disableAccount(intent.payload.accountId as string);
         return true;
       case "slack.testAccount":
         this.testAccount(intent.payload.accountId as string);
@@ -134,13 +146,14 @@ export class SlackHandler {
     this.refreshState();
   }
 
+  /** Rebuild data state from config, preserving transient UI fields */
   private async refreshState(): Promise<void> {
     try {
       const config = this.loadConfig();
       const slackConfig = config.channels?.slack || {};
 
       const accounts: SlackAccount[] = [];
-      
+
       // Load default account
       if (slackConfig.botToken) {
         accounts.push({
@@ -186,6 +199,9 @@ export class SlackHandler {
         }
       }
 
+      // Preserve transient UI fields from current state
+      const current = this.getCurrentState();
+
       const state: SlackState = {
         accounts,
         dmPolicy: slackConfig.dmPolicy || "pairing",
@@ -198,10 +214,12 @@ export class SlackHandler {
         status: { connected: false, accounts: [] },
         pairings: [],
         loading: false,
-        showAccountEditor: false,
-        editingAccount: null,
-        saving: false,
-        saveError: undefined,
+        // Preserve UI state
+        showAccountEditor: current.showAccountEditor,
+        editingAccount: current.editingAccount,
+        saving: current.saving,
+        saveError: current.saveError,
+        saveSuccess: current.saveSuccess,
       };
 
       // Try to get status
@@ -236,6 +254,7 @@ export class SlackHandler {
     state.editingAccount = null;
     state.saving = false;
     state.saveError = undefined;
+    state.saveSuccess = undefined;
     this.pushState(state);
   }
 
@@ -246,6 +265,7 @@ export class SlackHandler {
     state.editingAccount = account || null;
     state.saving = false;
     state.saveError = undefined;
+    state.saveSuccess = undefined;
     this.pushState(state);
   }
 
@@ -255,6 +275,7 @@ export class SlackHandler {
     state.editingAccount = null;
     state.saving = false;
     state.saveError = undefined;
+    state.saveSuccess = undefined;
     this.pushState(state);
   }
 
@@ -263,6 +284,7 @@ export class SlackHandler {
     const state = this.getCurrentState();
     state.saving = true;
     state.saveError = undefined;
+    state.saveSuccess = undefined;
     this.pushState(state);
 
     try {
@@ -282,10 +304,10 @@ export class SlackHandler {
       }
 
       // Test Slack connection
-      await this.testSlackConnection(botToken);
+      const slackInfo = await this.testSlackConnection(botToken);
 
       const configUpdates: string[] = [];
-      
+
       if (accountId === "default") {
         configUpdates.push(`channels.slack.enabled=true`);
         configUpdates.push(`channels.slack.mode=${mode}`);
@@ -304,22 +326,21 @@ export class SlackHandler {
 
       // Apply config changes
       for (const update of configUpdates) {
-        await execAsync(`openclaw config set ${update}`);
+        await configSet(update);
       }
 
-      // Wait for gateway to restart and connect
-      console.log("[slack] Waiting for Slack connection...");
-      await this.waitForConnection(10000); // 10 second timeout
+      // Sync config to gateway user and restart
+      await this.syncConfigToGateway();
 
-      // Success - close editor and refresh
+      // Success — show message, refresh accounts list in background
       const successState = this.getCurrentState();
       successState.saving = false;
-      successState.showAccountEditor = false;
-      successState.editingAccount = null;
       successState.saveError = undefined;
+      successState.saveSuccess = `Account "${accountId}" saved. Connected to ${slackInfo.team} (${slackInfo.user}).`;
       this.pushState(successState);
 
-      setTimeout(() => this.refreshState(), 500);
+      // Refresh data (preserves UI fields including saveSuccess)
+      setTimeout(() => this.refreshState(), 1000);
     } catch (err) {
       // Error - keep editor open and show error
       const errorState = this.getCurrentState();
@@ -329,11 +350,10 @@ export class SlackHandler {
     }
   }
 
-  private async testSlackConnection(botToken: string): Promise<void> {
+  private async testSlackConnection(botToken: string): Promise<{ team: string; user: string }> {
     try {
-      // Use Slack's auth.test API to validate token
       const https = await import("node:https");
-      
+
       return new Promise((resolve, reject) => {
         const req = https.request(
           {
@@ -353,7 +373,7 @@ export class SlackHandler {
                 const result = JSON.parse(data);
                 if (result.ok) {
                   console.log(`[slack] Token validated: ${result.team} (${result.user})`);
-                  resolve();
+                  resolve({ team: result.team, user: result.user });
                 } else {
                   reject(new Error(`Slack API error: ${result.error || "Unknown error"}`));
                 }
@@ -371,52 +391,116 @@ export class SlackHandler {
     }
   }
 
-  private async waitForConnection(timeoutMs: number): Promise<void> {
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeoutMs) {
-      try {
-        const result = await execAsync("openclaw channels status --json", { timeout: 2000 });
-        const status = JSON.parse(result.stdout);
-        if (status.slack && status.slack.connected) {
-          console.log("[slack] Connection established");
-          return;
-        }
-      } catch {
-        // Ignore errors during polling
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+  /** Copy root's openclaw config to the gateway user and restart the service */
+  private async syncConfigToGateway(): Promise<void> {
+    try {
+      const rootConfig = resolve(homedir(), ".openclaw", "openclaw.json");
+      await execAsync(`cp ${rootConfig} /home/openclaw/.openclaw/openclaw.json && chown openclaw:openclaw /home/openclaw/.openclaw/openclaw.json`);
+      await execAsync("systemctl restart openclaw", { timeout: 10000 });
+      console.log("[slack] Config synced to gateway user and service restarted");
+    } catch (err) {
+      console.warn(`[slack] Failed to sync config to gateway: ${(err as Error).message}`);
     }
-    console.warn("[slack] Connection timeout - config saved but connection not confirmed");
   }
 
-  private deleteAccount(accountId: string): void {
+  private async disableAccount(accountId: string): Promise<void> {
     try {
+      const config = this.loadConfig();
+      const slackConfig = config.channels?.slack || {};
+
+      // Toggle enabled state
+      let currentlyEnabled: boolean;
       if (accountId === "default") {
-        execAsync("openclaw config delete channels.slack.botToken").catch(console.error);
-        execAsync("openclaw config delete channels.slack.appToken").catch(console.error);
-        execAsync("openclaw config delete channels.slack.signingSecret").catch(console.error);
+        currentlyEnabled = slackConfig.enabled !== false;
+        await configSet(`channels.slack.enabled=${!currentlyEnabled}`);
       } else {
-        execAsync(`openclaw config delete channels.slack.accounts.${accountId}`).catch(console.error);
+        currentlyEnabled = slackConfig.accounts?.[accountId]?.enabled !== false;
+        await configSet(`channels.slack.accounts.${accountId}.enabled=${!currentlyEnabled}`);
       }
-      setTimeout(() => this.refreshState(), 500);
+
+      await this.syncConfigToGateway();
+      await this.refreshState();
     } catch (err) {
       this.pushError((err as Error).message);
     }
   }
 
-  private testAccount(accountId: string): void {
-    // TODO: Implement Slack API test call
-    console.log(`[slack] Testing account: ${accountId}`);
+  private async deleteAccount(accountId: string): Promise<void> {
+    try {
+      // Remove from config using direct JSON manipulation (openclaw config delete has issues)
+      const config = this.loadConfig();
+      const slackConfig = config.channels?.slack;
+      if (!slackConfig) return;
+
+      if (accountId === "default") {
+        delete slackConfig.botToken;
+        delete slackConfig.appToken;
+        delete slackConfig.signingSecret;
+      } else if (slackConfig.accounts) {
+        delete slackConfig.accounts[accountId];
+      }
+
+      writeFileSync(this.configPath, JSON.stringify(config, null, 2), "utf-8");
+      await this.syncConfigToGateway();
+      await this.refreshState();
+    } catch (err) {
+      this.pushError((err as Error).message);
+    }
+  }
+
+  private async testAccount(accountId: string): Promise<void> {
+    const state = this.getCurrentState();
+    state.saving = true;
+    state.saveError = undefined;
+    state.saveSuccess = undefined;
+    this.pushState(state);
+
+    try {
+      const config = this.loadConfig();
+      const slackConfig = config.channels?.slack || {};
+      let botToken: string | undefined;
+
+      if (accountId === "default") {
+        botToken = slackConfig.botToken;
+      } else {
+        botToken = slackConfig.accounts?.[accountId]?.botToken;
+      }
+
+      if (!botToken) {
+        throw new Error(`No bot token found for account "${accountId}"`);
+      }
+
+      const info = await this.testSlackConnection(botToken);
+
+      const resultState = this.getCurrentState();
+      resultState.saving = false;
+      resultState.saveSuccess = `Account "${accountId}" connected to ${info.team} (${info.user}).`;
+      this.pushState(resultState);
+
+      // Auto-clear after 5 seconds
+      setTimeout(() => {
+        const s = this.getCurrentState();
+        if (s.saveSuccess?.includes(accountId)) {
+          s.saveSuccess = undefined;
+          this.pushState(s);
+        }
+      }, 5000);
+    } catch (err) {
+      const errorState = this.getCurrentState();
+      errorState.saving = false;
+      errorState.saveError = (err as Error).message;
+      this.pushState(errorState);
+    }
   }
 
   private setDmPolicy(policy: string): void {
-    execAsync(`openclaw config set channels.slack.dmPolicy=${policy}`)
+    configSet(`channels.slack.dmPolicy=${policy}`)
       .then(() => setTimeout(() => this.refreshState(), 500))
       .catch((err) => this.pushError(err.message));
   }
 
   private setGroupPolicy(policy: string): void {
-    execAsync(`openclaw config set channels.slack.groupPolicy=${policy}`)
+    configSet(`channels.slack.groupPolicy=${policy}`)
       .then(() => setTimeout(() => this.refreshState(), 500))
       .catch((err) => this.pushError(err.message));
   }
@@ -437,7 +521,7 @@ export class SlackHandler {
       }
 
       for (const update of configUpdates) {
-        execAsync(`openclaw config set ${update}`).catch(console.error);
+        configSet(update).catch(console.error);
       }
 
       setTimeout(() => this.refreshState(), 500);
@@ -453,19 +537,19 @@ export class SlackHandler {
   }
 
   private setReplyMode(mode: string): void {
-    execAsync(`openclaw config set channels.slack.replyToMode=${mode}`)
+    configSet(`channels.slack.replyToMode=${mode}`)
       .then(() => setTimeout(() => this.refreshState(), 500))
       .catch((err) => this.pushError(err.message));
   }
 
   private setStreaming(mode: string): void {
-    execAsync(`openclaw config set channels.slack.streaming=${mode}`)
+    configSet(`channels.slack.streaming=${mode}`)
       .then(() => setTimeout(() => this.refreshState(), 500))
       .catch((err) => this.pushError(err.message));
   }
 
   private toggleAction(group: string, enabled: boolean): void {
-    execAsync(`openclaw config set channels.slack.actions.${group}=${enabled}`)
+    configSet(`channels.slack.actions.${group}=${enabled}`)
       .then(() => setTimeout(() => this.refreshState(), 500))
       .catch((err) => this.pushError(err.message));
   }
@@ -479,7 +563,7 @@ export class SlackHandler {
     if (name) updates.push(`channels.slack.slashCommand.name=${name}`);
 
     for (const update of updates) {
-      execAsync(`openclaw config set ${update}`).catch(console.error);
+      configSet(update).catch(console.error);
     }
 
     setTimeout(() => this.refreshState(), 500);
@@ -568,6 +652,7 @@ export class SlackHandler {
       editingAccount: null,
       saving: false,
       saveError: undefined,
+      saveSuccess: undefined,
     };
   }
 }

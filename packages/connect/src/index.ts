@@ -139,10 +139,10 @@ async function main() {
     },
   });
 
-  // 8. Periodic refresh to detect external config changes (every 10s)
+  // 8. Periodic refresh to detect external config changes (every 60s)
   const refreshInterval = setInterval(() => {
     settingsHandler.refreshSettingsState();
-  }, 10_000);
+  }, 60_000);
 
   console.log(`📁 State dir: ${stateDir}`);
   console.log(`📄 Views dir: ${viewsDir}`);

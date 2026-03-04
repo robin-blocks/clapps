@@ -114,7 +114,7 @@ export class ClappTransport {
 
     // HTTP fallback
     const message: IntentMessage = {
-      id: crypto.randomUUID(),
+      id: globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36),
       agentId: "local",
       clappId,
       intent,

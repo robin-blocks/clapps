@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useClappState, useIntent } from "@clapps/renderer";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,9 @@ export function AccountEditor({ account }: AccountEditorProps) {
   const { emit } = useIntent();
   const backendSaving = useClappState<boolean>("slack.saving") ?? false;
   const saveError = useClappState<string | null>("slack.saveError") ?? null;
-  const [saveClicked, setSaveClicked] = useState(false);
+  const saveSuccess = useClappState<string | null>("slack.saveSuccess") ?? null;
+  const [saving, setSaving] = useState(false);
+  const prevBackendSaving = useRef(backendSaving);
 
   const [accountId, setAccountId] = useState(account?.id || "");
   const [mode, setMode] = useState<"socket" | "http">((account?.mode as "socket" | "http") || "socket");
@@ -28,23 +30,26 @@ export function AccountEditor({ account }: AccountEditorProps) {
   const [signingSecret, setSigningSecret] = useState(account?.signingSecret || "");
   const [webhookPath, setWebhookPath] = useState(account?.webhookPath || "/slack/events");
 
-  const showSaving = saveClicked && backendSaving;
-
+  // Track backend saving transitions: show loading until backend confirms done
   useEffect(() => {
-    if (!saveClicked) return;
-    if (!backendSaving) {
-      setSaveClicked(false);
+    if (backendSaving && !prevBackendSaving.current) {
+      // Backend started saving — keep our saving state
+    } else if (!backendSaving && prevBackendSaving.current) {
+      // Backend finished — clear saving
+      setSaving(false);
     }
-  }, [saveClicked, backendSaving]);
+    prevBackendSaving.current = backendSaving;
+  }, [backendSaving]);
 
+  // Safety timeout in case backend never responds
   useEffect(() => {
-    if (!saveClicked) return;
-    const timer = setTimeout(() => setSaveClicked(false), 15000);
+    if (!saving) return;
+    const timer = setTimeout(() => setSaving(false), 20000);
     return () => clearTimeout(timer);
-  }, [saveClicked]);
+  }, [saving]);
 
   const handleSave = () => {
-    setSaveClicked(true);
+    setSaving(true);
     emit("slack.saveAccount", {
       accountId: accountId || "default",
       mode,
@@ -64,6 +69,21 @@ export function AccountEditor({ account }: AccountEditorProps) {
     setWebhookPath("/slack/events");
   };
 
+  if (saveSuccess) {
+    return (
+      <Card className="p-6">
+        <div className="space-y-4">
+          <p className="text-sm text-green-600 font-medium">{saveSuccess}</p>
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => emit("slack.cancelEdit")}>
+              Done
+            </Button>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card className="p-6">
       <div className="space-y-4">
@@ -73,7 +93,7 @@ export function AccountEditor({ account }: AccountEditorProps) {
             value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
             placeholder="default"
-            disabled={showSaving}
+            disabled={saving}
           />
         </div>
 
@@ -84,7 +104,7 @@ export function AccountEditor({ account }: AccountEditorProps) {
               type="button"
               variant={mode === "socket" ? "default" : "outline"}
               onClick={() => setMode("socket")}
-              disabled={showSaving}
+              disabled={saving}
             >
               Socket Mode
             </Button>
@@ -92,7 +112,7 @@ export function AccountEditor({ account }: AccountEditorProps) {
               type="button"
               variant={mode === "http" ? "default" : "outline"}
               onClick={() => setMode("http")}
-              disabled={showSaving}
+              disabled={saving}
             >
               HTTP Events API
             </Button>
@@ -106,7 +126,7 @@ export function AccountEditor({ account }: AccountEditorProps) {
             onChange={(e) => setBotToken(e.target.value)}
             placeholder="xoxb-..."
             type="password"
-            disabled={showSaving}
+            disabled={saving}
           />
         </div>
 
@@ -118,7 +138,7 @@ export function AccountEditor({ account }: AccountEditorProps) {
               onChange={(e) => setAppToken(e.target.value)}
               placeholder="xapp-..."
               type="password"
-              disabled={showSaving}
+              disabled={saving}
             />
           </div>
         )}
@@ -132,7 +152,7 @@ export function AccountEditor({ account }: AccountEditorProps) {
                 onChange={(e) => setSigningSecret(e.target.value)}
                 placeholder="Signing secret"
                 type="password"
-                disabled={showSaving}
+                disabled={saving}
               />
             </div>
             <div>
@@ -141,18 +161,18 @@ export function AccountEditor({ account }: AccountEditorProps) {
                 value={webhookPath}
                 onChange={(e) => setWebhookPath(e.target.value)}
                 placeholder="/slack/events"
-                disabled={showSaving}
+                disabled={saving}
               />
             </div>
           </>
         )}
 
         <div className="flex gap-2 justify-end pt-2">
-          <Button type="button" variant="outline" onClick={handleClear} disabled={showSaving}>
+          <Button type="button" variant="outline" onClick={handleClear} disabled={saving}>
             Clear
           </Button>
-          <Button type="button" onClick={handleSave} disabled={!botToken || showSaving}>
-            {showSaving ? "Saving…" : "Save Account"}
+          <Button type="button" onClick={handleSave} disabled={!botToken || saving}>
+            {saving ? "Saving…" : "Save Account"}
           </Button>
         </div>
 
