@@ -167,11 +167,6 @@ async function handleRequest(
     return handleApi(req, res, path, store, onIntent, agentConnected);
   }
 
-  // OAuth callback (public - redirected from OAuth provider)
-  if (path === "/api/oauth/callback" && oauthHandler) {
-    return handleOAuthCallback(req, res, oauthHandler);
-  }
-
   // Login routes
   if (path === "/auth/login") {
     if (req.method === "GET") {
@@ -402,90 +397,6 @@ async function handleOAuthInit(
     res.end(JSON.stringify({ 
       error: error instanceof Error ? error.message : "OAuth init failed" 
     }));
-  }
-}
-
-async function handleOAuthCallback(
-  req: IncomingMessage,
-  res: ServerResponse,
-  oauthHandler: OAuthHandler,
-): Promise<void> {
-  if (req.method !== "GET") {
-    res.writeHead(405, { "Content-Type": "text/html" });
-    res.end("Method not allowed");
-    return;
-  }
-
-  const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-
-  if (!code || !state) {
-    res.writeHead(400, { "Content-Type": "text/html" });
-    res.end(getOAuthResultPage(false, "Missing code or state parameter"));
-    return;
-  }
-
-  try {
-    const result = await oauthHandler.handleCallback(code, state);
-    
-    if (result.success) {
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(getOAuthResultPage(true));
-    } else {
-      res.writeHead(400, { "Content-Type": "text/html" });
-      res.end(getOAuthResultPage(false, result.error));
-    }
-  } catch (error) {
-    console.error("[oauth] Callback failed:", error);
-    res.writeHead(500, { "Content-Type": "text/html" });
-    res.end(getOAuthResultPage(false, error instanceof Error ? error.message : "Unknown error"));
-  }
-}
-
-function getOAuthResultPage(success: boolean, error?: string): string {
-  if (success) {
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Authentication Successful</title>
-  <style>
-    body { font-family: system-ui; text-align: center; padding: 50px; }
-    .success { color: #22c55e; font-size: 24px; margin-bottom: 20px; }
-    button { padding: 12px 24px; font-size: 16px; cursor: pointer; }
-  </style>
-</head>
-<body>
-  <div class="success">✓ Authentication Successful</div>
-  <p>You can close this window now.</p>
-  <button onclick="window.close()">Close Window</button>
-  <script>
-    // Auto-close after 2 seconds
-    setTimeout(() => window.close(), 2000);
-  </script>
-</body>
-</html>
-    `;
-  } else {
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Authentication Failed</title>
-  <style>
-    body { font-family: system-ui; text-align: center; padding: 50px; }
-    .error { color: #ef4444; font-size: 24px; margin-bottom: 20px; }
-    .message { color: #666; margin-bottom: 20px; }
-  </style>
-</head>
-<body>
-  <div class="error">✗ Authentication Failed</div>
-  <div class="message">${error || "Unknown error"}</div>
-  <p>Please try again or contact support.</p>
-</body>
-</html>
-    `;
   }
 }
 

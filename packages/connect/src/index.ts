@@ -163,6 +163,7 @@ async function main() {
     console.log("\nShutting down...");
     clearInterval(refreshInterval);
     server.close();
+    oauthHandler.stop();
     agentClient.stop();
     chatAgentClient.stop();
     process.exit(0);

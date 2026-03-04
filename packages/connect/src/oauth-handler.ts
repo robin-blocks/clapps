@@ -2,6 +2,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { createServer } from "node:http";
 
 interface OAuthState {
   provider: string;
@@ -31,6 +32,8 @@ interface AuthProfilesFile {
 export class OAuthHandler {
   private pendingStates = new Map<string, OAuthState>();
   private authProfilesPath: string;
+  private callbackPort = 1455;
+  private callbackServer: any = null;
 
   constructor(authProfilesPath?: string) {
     this.authProfilesPath =
@@ -39,6 +42,103 @@ export class OAuthHandler {
 
     // Clean up old states every 5 minutes
     setInterval(() => this.cleanupExpiredStates(), 5 * 60 * 1000);
+
+    // Start callback server on port 1455
+    this.startCallbackServer();
+  }
+
+  private startCallbackServer(): void {
+    this.callbackServer = createServer((req, res) => {
+      const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+      
+      if (url.pathname === "/auth/callback" && req.method === "GET") {
+        const code = url.searchParams.get("code");
+        const state = url.searchParams.get("state");
+
+        if (!code || !state) {
+          res.writeHead(400, { "Content-Type": "text/html" });
+          res.end(this.getResultPage(false, "Missing code or state parameter"));
+          return;
+        }
+
+        // Handle callback asynchronously
+        this.handleCallback(code, state)
+          .then((result) => {
+            if (result.success) {
+              res.writeHead(200, { "Content-Type": "text/html" });
+              res.end(this.getResultPage(true));
+            } else {
+              res.writeHead(400, { "Content-Type": "text/html" });
+              res.end(this.getResultPage(false, result.error));
+            }
+          })
+          .catch((error) => {
+            res.writeHead(500, { "Content-Type": "text/html" });
+            res.end(this.getResultPage(false, error instanceof Error ? error.message : "Unknown error"));
+          });
+      } else {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not Found");
+      }
+    });
+
+    this.callbackServer.on("error", (err: any) => {
+      if (err.code === "EADDRINUSE") {
+        console.warn(`[oauth] Port ${this.callbackPort} already in use (Codex CLI may be running)`);
+      } else {
+        console.error(`[oauth] Callback server error:`, err);
+      }
+    });
+
+    this.callbackServer.listen(this.callbackPort, "127.0.0.1", () => {
+      console.log(`[oauth] Callback server listening on http://127.0.0.1:${this.callbackPort}`);
+    });
+  }
+
+  private getResultPage(success: boolean, error?: string): string {
+    if (success) {
+      return `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Authentication Successful</title>
+  <style>
+    body { font-family: system-ui; text-align: center; padding: 50px; }
+    .success { color: #22c55e; font-size: 24px; margin-bottom: 20px; }
+    button { padding: 12px 24px; font-size: 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="success">✓ Authentication Successful</div>
+  <p>You can close this window now.</p>
+  <button onclick="window.close()">Close Window</button>
+  <script>
+    // Auto-close after 2 seconds
+    setTimeout(() => window.close(), 2000);
+  </script>
+</body>
+</html>
+      `;
+    } else {
+      return `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Authentication Failed</title>
+  <style>
+    body { font-family: system-ui; text-align: center; padding: 50px; }
+    .error { color: #ef4444; font-size: 24px; margin-bottom: 20px; }
+    .message { color: #666; margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <div class="error">✗ Authentication Failed</div>
+  <div class="message">${error || "Unknown error"}</div>
+  <p>Please try again or contact support.</p>
+</body>
+</html>
+      `;
+    }
   }
 
   private cleanupExpiredStates(): void {
@@ -48,6 +148,12 @@ export class OAuthHandler {
       if (now - data.timestamp > maxAge) {
         this.pendingStates.delete(state);
       }
+    }
+  }
+
+  stop(): void {
+    if (this.callbackServer) {
+      this.callbackServer.close();
     }
   }
 
