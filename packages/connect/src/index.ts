@@ -2,13 +2,9 @@
 
 import { resolve, dirname } from "node:path";
 import { homedir } from "node:os";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync, statSync, chownSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
-
-const execAsync = promisify(exec);
-
 import { AgentClient } from "./agent-client.js";
 import { AgentHandler } from "./agent-handler.js";
 import { StateStore } from "./state-store.js";
@@ -41,6 +37,10 @@ async function main() {
   const agentToken = opts["agent-token"];
   const session = opts.session ?? "agent:main:main";
 
+  // openclaw home: where openclaw config lives (may differ from process homedir
+  // when clapps-connect runs as root but the gateway runs as a different user)
+  const openclawHome = opts["openclaw-home"] ?? process.env.OPENCLAW_HOME ?? homedir();
+
   // Initialize access token for auth
   const accessToken = initAccessToken({
     token: opts.token,
@@ -48,10 +48,10 @@ async function main() {
   });
   const stateDir =
     opts["state-dir"] ??
-    resolve(homedir(), ".openclaw", "workspace", "ui", "state");
+    resolve(openclawHome, ".openclaw", "workspace", "ui", "state");
   const viewsDir =
     opts["views-dir"] ??
-    resolve(homedir(), ".openclaw", "workspace", "ui", "views");
+    resolve(openclawHome, ".openclaw", "workspace", "ui", "views");
 
   // Ensure directories exist
   mkdirSync(stateDir, { recursive: true });
@@ -62,9 +62,33 @@ async function main() {
 
   // 2. Seed defaults to disk
   seedDefaults(viewsDir, stateDir);
-  checkAuthStatus(stateDir);
+  checkAuthStatus(stateDir, resolve(openclawHome, ".openclaw", "agents", "main", "agent", "auth-profiles.json"));
 
-  const settingsHandler = new SettingsHandler({ stateDir, store });
+  const needsOwnershipFix = openclawHome !== homedir();
+  const configPath = resolve(openclawHome, ".openclaw", "openclaw.json");
+  const authPath = resolve(openclawHome, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+
+  const settingsHandler = new SettingsHandler({
+    stateDir,
+    store,
+    openclawHome,
+    onConfigChanged: needsOwnershipFix ? () => {
+      try {
+        const { uid, gid } = statSync(openclawHome);
+        for (const p of [configPath, authPath]) {
+          if (existsSync(p)) chownSync(p, uid, gid);
+        }
+      } catch { /* best effort */ }
+    } : undefined,
+    onModelDefaultChanged: needsOwnershipFix ? () => {
+      spawnSync("systemctl", ["restart", "openclaw"], {
+        encoding: "utf-8",
+        timeout: 15_000,
+      });
+      // Wait for gateway to come back
+      spawnSync("sleep", ["3"]);
+    } : undefined,
+  });
   settingsHandler.writeSettingsState();
 
   // 3. Start ACP subprocess for intents
@@ -104,22 +128,17 @@ async function main() {
   // Create chat handler (uses dedicated chat and title sessions)
   const chatHandler = new ChatHandler({ stateDir, store, agentClient: chatAgentClient, titleAgentClient });
 
-  // Create slack handler (with deployment-specific config sync)
+  // Create slack handler
   const slackHandler = new SlackHandler({
     stateDir,
     store,
-    onConfigChanged: async () => {
-      const rootConfig = resolve(homedir(), ".openclaw", "openclaw.json");
-      await execAsync(
-        `cp ${rootConfig} /home/openclaw/.openclaw/openclaw.json && chown openclaw:openclaw /home/openclaw/.openclaw/openclaw.json`,
-      );
-      await execAsync("systemctl restart openclaw", { timeout: 10000 });
-      console.log("[slack] Config synced to gateway user and service restarted");
-    },
+    openclawHome,
   });
 
-  // Create OAuth handler
-  const oauthHandler = new OAuthHandler();
+  // Create OAuth handler (uses openclawHome for auth-profiles.json)
+  const oauthHandler = new OAuthHandler(
+    resolve(openclawHome, ".openclaw", "agents", "main", "agent", "auth-profiles.json"),
+  );
 
   // 4. Create agent handler (syncs disk → store after intents)
   const agentHandler = new AgentHandler({
@@ -143,6 +162,7 @@ async function main() {
     staticDir,
     accessToken,
     oauthHandler,
+    openclawHome,
     agentConnected: () => agentStarted,
     onConnect: () => {
       // Refresh settings state when a client connects (catches external changes)
@@ -167,6 +187,9 @@ async function main() {
 
   console.log(`📁 State dir: ${stateDir}`);
   console.log(`📄 Views dir: ${viewsDir}`);
+  if (openclawHome !== homedir()) {
+    console.log(`🏠 OpenClaw home: ${openclawHome}`);
+  }
   if (accessToken) {
     console.log(`🔐 Access code: ${formatToken(accessToken)}`);
     console.log(`   Saved to ~/.openclaw/workspace/ui/.access-token`);

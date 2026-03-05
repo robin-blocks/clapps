@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@source "./components/**/*.tsx";
 
 @theme {
   --color-background: oklch(0.145 0 0);

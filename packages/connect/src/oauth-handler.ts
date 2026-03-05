@@ -102,8 +102,8 @@ export class OAuthHandler {
       }
     });
 
-    this.callbackServer.listen(this.callbackPort, "127.0.0.1", () => {
-      console.log(`[oauth] Callback server listening on http://127.0.0.1:${this.callbackPort}`);
+    this.callbackServer.listen(this.callbackPort, "localhost", () => {
+      console.log(`[oauth] Callback server listening on http://localhost:${this.callbackPort}`);
     });
   }
 
@@ -205,13 +205,16 @@ export class OAuthHandler {
     // OpenAI Codex OAuth
     if (provider === "openai-codex" || provider === "openai") {
       const params = new URLSearchParams({
-        client_id: "codex-cli",
-        redirect_uri: "http://127.0.0.1:1455/auth/callback",
         response_type: "code",
+        client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
+        redirect_uri: "http://localhost:1455/auth/callback",
         scope: "openid profile email offline_access",
-        state,
         code_challenge: challenge,
         code_challenge_method: "S256",
+        state,
+        id_token_add_organizations: "true",
+        codex_cli_simplified_flow: "true",
+        originator: "pi",
       });
       return `https://auth.openai.com/oauth/authorize?${params}`;
     }
@@ -266,10 +269,10 @@ export class OAuthHandler {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
           grant_type: "authorization_code",
-          client_id: "codex-cli",
+          client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
           code,
           code_verifier: codeVerifier,
-          redirect_uri: "http://127.0.0.1:1455/auth/callback",
+          redirect_uri: "http://localhost:1455/auth/callback",
         }),
       });
 

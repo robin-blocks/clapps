@@ -23,6 +23,7 @@ export interface ServerOptions {
   onConnect?: () => void; // called when a client connects (for state refresh)
   accessToken?: string | null; // null = no auth
   oauthHandler?: OAuthHandler;
+  openclawHome?: string; // override homedir for openclaw paths
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -46,10 +47,10 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export function startServer(options: ServerOptions): { close: () => void } {
-  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken, oauthHandler } = options;
+  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken, oauthHandler, openclawHome } = options;
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null, oauthHandler);
+    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null, oauthHandler, openclawHome);
   });
 
   // Use noServer mode so we can authenticate WS upgrades
@@ -140,6 +141,7 @@ async function handleRequest(
   agentConnected: (() => boolean) | undefined,
   accessToken: string | null,
   oauthHandler?: OAuthHandler,
+  openclawHome?: string,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   const path = url.pathname;
@@ -164,7 +166,7 @@ async function handleRequest(
 
   // Auth-exempt routes
   if (path === "/api/health") {
-    return handleApi(req, res, path, store, onIntent, agentConnected);
+    return handleApi(req, res, path, store, onIntent, agentConnected, openclawHome);
   }
 
   // Login routes
@@ -195,14 +197,17 @@ async function handleRequest(
     }
   }
 
-  // OAuth init (authenticated)
+  // OAuth routes (authenticated)
   if (path === "/api/oauth/init" && oauthHandler) {
     return handleOAuthInit(req, res, oauthHandler);
+  }
+  if (path === "/api/oauth/callback" && oauthHandler) {
+    return handleOAuthCallback(req, res, oauthHandler);
   }
 
   // API routes
   if (path.startsWith("/api/")) {
-    return handleApi(req, res, path, store, onIntent, agentConnected);
+    return handleApi(req, res, path, store, onIntent, agentConnected, openclawHome);
   }
 
   // Serve static SPA files
@@ -263,6 +268,7 @@ async function handleApi(
   store: StateStore,
   onIntent: ServerOptions["onIntent"],
   agentConnected: (() => boolean) | undefined,
+  openclawHome?: string,
 ): Promise<void> {
   // GET /api/apps
   if (path === "/api/apps" && req.method === "GET") {
@@ -331,7 +337,6 @@ async function handleApi(
   // GET /api/chat-assets/:sessionKey/:fileName
   const assetMatch = path.match(/^\/api\/chat-assets\/([^/]+)\/([^/]+)$/);
   if (assetMatch && req.method === "GET") {
-    const { homedir } = await import("node:os");
     const sessionKey = decodeURIComponent(assetMatch[1]);
     const fileName = decodeURIComponent(assetMatch[2]);
 
@@ -341,7 +346,9 @@ async function handleApi(
       return;
     }
 
-    const assetPath = resolve(homedir(), ".openclaw", "workspace", "chat-sessions", "assets", sessionKey, fileName);
+    const { homedir } = await import("node:os");
+    const home = openclawHome ?? homedir();
+    const assetPath = resolve(home, ".openclaw", "workspace", "chat-sessions", "assets", sessionKey, fileName);
     if (!existsSync(assetPath)) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "asset not found" }));
@@ -396,6 +403,49 @@ async function handleOAuthInit(
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ 
       error: error instanceof Error ? error.message : "OAuth init failed" 
+    }));
+  }
+}
+
+async function handleOAuthCallback(
+  req: IncomingMessage,
+  res: ServerResponse,
+  oauthHandler: OAuthHandler,
+): Promise<void> {
+  if (req.method !== "POST") {
+    res.writeHead(405, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "method not allowed" }));
+    return;
+  }
+
+  try {
+    const body = await readBody(req);
+    const data = JSON.parse(body);
+    const callbackUrl = data.callbackUrl as string | undefined;
+
+    if (!callbackUrl) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "callbackUrl is required" }));
+      return;
+    }
+
+    const parsed = new URL(callbackUrl);
+    const code = parsed.searchParams.get("code");
+    const state = parsed.searchParams.get("state");
+
+    if (!code || !state) {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "URL must contain code and state parameters" }));
+      return;
+    }
+
+    const result = await oauthHandler.handleCallback(code, state);
+    json(res, result);
+  } catch (error) {
+    console.error("[oauth] Callback failed:", error);
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      error: error instanceof Error ? error.message : "OAuth callback failed",
     }));
   }
 }
