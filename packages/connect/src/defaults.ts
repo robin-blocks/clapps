@@ -109,6 +109,198 @@ Column(gap=5):
 | settings.applyDefaultToAll | \`{}\` | Apply system default to all sessions |
 `;
 
+const DEFAULT_SLACK_APP_MD = `---
+name: Slack
+domain: default
+---
+
+## Modules
+- default/slack-connections
+- default/slack-channels
+- default/slack-settings
+- default/slack-status
+
+## Layout
+\`\`\`clapp-layout
+Module(ref=default/slack-connections):
+\`\`\`
+`;
+
+const DEFAULT_SLACK_CONNECTIONS_VIEW = `---
+name: slack-connections
+domain: default
+version: 0.1.0
+---
+
+## State Bindings
+- \`slack.accounts\` -> array
+- \`slack.loading\` -> boolean
+- \`slack.error\` -> string
+- \`slack.editingAccount\` -> object
+- \`slack.saving\` -> boolean
+- \`slack.saveError\` -> string
+
+## Layout
+\`\`\`clapp-layout
+Column(gap=5):
+  Card(title=Add or Update Slack Account):
+    AccountEditor(account=slack.editingAccount, saving=slack.saving, saveError=slack.saveError):
+
+  Card(title=Configured Slack Accounts):
+    Column(gap=4):
+      Conditional(when=slack.loading):
+        Skeleton():
+      Conditional(when=!slack.loading):
+        Conditional(when=slack.accounts.length):
+          List(data=slack.accounts):
+            AccountCard():
+        Conditional(when=!slack.accounts.length):
+          Heading(level=4): "No Slack accounts configured"
+
+  Conditional(when=slack.error):
+    Card(variant=destructive):
+      Heading(level=4): "Error"
+      MarkdownContent(content=slack.error):
+\`\`\`
+
+## Intents
+| Name | Payload | Description |
+|------|---------|-------------|
+| slack.init | \`{}\` | Load Slack accounts |
+| slack.editAccount | \`{ accountId: string }\` | Load account into editor |
+| slack.deleteAccount | \`{ accountId: string }\` | Remove account |
+| slack.testAccount | \`{ accountId: string }\` | Test connection |
+| slack.saveAccount | \`{ accountId: string, mode: string, botToken: string, appToken?: string, signingSecret?: string, webhookPath?: string }\` | Save account config |
+`;
+
+const DEFAULT_SLACK_CHANNELS_VIEW = `---
+name: slack-channels
+domain: default
+version: 0.1.0
+---
+
+## State Bindings
+- \`slack.dmPolicy\` -> string
+- \`slack.groupPolicy\` -> string
+- \`slack.channels\` -> array
+- \`slack.loading\` -> boolean
+
+## Layout
+\`\`\`clapp-layout
+Column(gap=5):
+  Card(title=Access Control):
+    Column(gap=4):
+      Heading(level=4): "DM Policy"
+      PolicySelector(value=slack.dmPolicy, type=dm):
+      Heading(level=4): "Channel Policy"
+      PolicySelector(value=slack.groupPolicy, type=group):
+
+  Card(title=Allowed Channels):
+    Column(gap=4):
+      Conditional(when=slack.loading):
+        Skeleton():
+      Conditional(when=!slack.loading):
+        Conditional(when=slack.channels.length):
+          ChannelList(channels=slack.channels):
+        Conditional(when=!slack.channels.length):
+          Heading(level=4): "No channels configured"
+      IntentButton(intent=slack.addChannel, label="Add Channel", variant=primary):
+\`\`\`
+
+## Intents
+| Name | Payload | Description |
+|------|---------|-------------|
+| slack.init | \`{}\` | Load channel config |
+| slack.setDmPolicy | \`{ policy: string }\` | Set DM access policy |
+| slack.setGroupPolicy | \`{ policy: string }\` | Set channel access policy |
+| slack.addChannel | \`{}\` | Add channel to allowlist |
+| slack.editChannel | \`{ channelId: string }\` | Edit channel settings |
+| slack.removeChannel | \`{ channelId: string }\` | Remove channel from allowlist |
+| slack.saveChannel | \`{ channelId: string, requireMention?: boolean, users?: string[], skills?: string[] }\` | Save channel config |
+`;
+
+const DEFAULT_SLACK_SETTINGS_VIEW = `---
+name: slack-settings
+domain: default
+version: 0.1.0
+---
+
+## State Bindings
+- \`slack.streaming\` -> string
+- \`slack.replyToMode\` -> string
+- \`slack.actions\` -> object
+- \`slack.slashCommand\` -> object
+- \`slack.loading\` -> boolean
+
+## Layout
+\`\`\`clapp-layout
+Column(gap=5):
+  Card(title=Threading & Streaming):
+    Column(gap=4):
+      Heading(level=4): "Reply Mode"
+      TextInput(value=slack.replyToMode, placeholder="off"):
+      Heading(level=4): "Streaming Mode"
+      TextInput(value=slack.streaming, placeholder="partial"):
+
+  Card(title=Slash Commands):
+    SlashCommandConfig(config=slack.slashCommand):
+
+  Card(title=Actions):
+    FeatureToggles(actions=slack.actions):
+\`\`\`
+
+## Intents
+| Name | Payload | Description |
+|------|---------|-------------|
+| slack.init | \`{}\` | Load settings |
+| slack.setReplyMode | \`{ mode: string }\` | Set reply threading mode |
+| slack.setStreaming | \`{ mode: string }\` | Set streaming mode |
+| slack.toggleAction | \`{ group: string, enabled: boolean }\` | Enable/disable action group |
+| slack.setSlashCommand | \`{ enabled: boolean, name?: string }\` | Configure slash command |
+`;
+
+const DEFAULT_SLACK_STATUS_VIEW = `---
+name: slack-status
+domain: default
+version: 0.1.0
+---
+
+## State Bindings
+- \`slack.status\` -> object
+- \`slack.pairings\` -> array
+- \`slack.loading\` -> boolean
+
+## Layout
+\`\`\`clapp-layout
+Column(gap=5):
+  Card(title=Connection Status):
+    Conditional(when=slack.loading):
+      Skeleton():
+    Conditional(when=!slack.loading):
+      ConnectionStatus(status=slack.status):
+
+  Card(title=Pending Pairings):
+    Conditional(when=slack.pairings.length):
+      List(data=slack.pairings):
+        Row(gap=3):
+          Column(flex=1):
+            Heading(level=4): "{item.code}"
+            MarkdownContent(content="{item.user}"):
+          IntentButton(intent=slack.approvePairing, payload={code: item.code}, label="Approve", variant=primary):
+          IntentButton(intent=slack.rejectPairing, payload={code: item.code}, label="Reject", variant=destructive):
+    Conditional(when=!slack.pairings.length):
+      Heading(level=4): "No pending pairings"
+\`\`\`
+
+## Intents
+| Name | Payload | Description |
+|------|---------|-------------|
+| slack.init | \`{}\` | Load status and pairings |
+| slack.approvePairing | \`{ code: string }\` | Approve pairing request |
+| slack.rejectPairing | \`{ code: string }\` | Reject pairing request |
+| slack.refreshStatus | \`{}\` | Refresh connection status |
+`;
+
 const DEFAULT_APP_ENTRIES: AppEntry[] = [
   {
     id: "chat",
@@ -124,30 +316,49 @@ const DEFAULT_APP_ENTRIES: AppEntry[] = [
     description: "Configure your agent",
     pinned: true,
   },
+  {
+    id: "slack",
+    name: "Slack",
+    emoji: "\u{1F4AC}",
+    description: "Manage Slack integration",
+  },
 ];
+
+interface ClappView {
+  path: string;
+  md: string;
+}
 
 interface ClappDef {
   id: string;
   appPath: string;
-  viewPath: string;
   appMd: string;
-  viewMd: string;
+  views: ClappView[];
 }
 
 const BUNDLED_CLAPPS: ClappDef[] = [
   {
     id: "chat",
     appPath: "chat.app.md",
-    viewPath: "default.chat.view.md",
     appMd: DEFAULT_CHAT_APP_MD,
-    viewMd: DEFAULT_CHAT_VIEW,
+    views: [{ path: "default.chat.view.md", md: DEFAULT_CHAT_VIEW }],
   },
   {
     id: "settings",
     appPath: "settings.app.md",
-    viewPath: "default.settings.view.md",
     appMd: DEFAULT_SETTINGS_APP_MD,
-    viewMd: DEFAULT_SETTINGS_VIEW,
+    views: [{ path: "default.settings.view.md", md: DEFAULT_SETTINGS_VIEW }],
+  },
+  {
+    id: "slack",
+    appPath: "slack.app.md",
+    appMd: DEFAULT_SLACK_APP_MD,
+    views: [
+      { path: "default.slack-connections.view.md", md: DEFAULT_SLACK_CONNECTIONS_VIEW },
+      { path: "default.slack-channels.view.md", md: DEFAULT_SLACK_CHANNELS_VIEW },
+      { path: "default.slack-settings.view.md", md: DEFAULT_SLACK_SETTINGS_VIEW },
+      { path: "default.slack-status.view.md", md: DEFAULT_SLACK_STATUS_VIEW },
+    ],
   },
 ];
 
@@ -226,17 +437,18 @@ export function seedDefaults(viewsDir: string, stateDir: string): void {
   // Seed app definitions and view modules
   for (const clapp of BUNDLED_CLAPPS) {
     const fullAppPath = resolve(viewsDir, clapp.appPath);
-    const appContent = loadView(clapp.id, clapp.appPath.replace(".app.md", ".app.md"), clapp.appMd);
-    
+    const appContent = loadView(clapp.id, clapp.appPath, clapp.appMd);
+
     if (!existsSync(fullAppPath)) {
       writeFileSync(fullAppPath, appContent, "utf-8");
       console.log(`📝 Created app: ${fullAppPath}`);
     }
 
-    const fullViewPath = resolve(viewsDir, clapp.viewPath);
-    const viewFile = clapp.viewPath.replace("default.", "").replace(".view.md", ".view.md");
-    const viewContent = loadView(clapp.id, `default.${clapp.id}.view.md`, clapp.viewMd);
-    writeFileSync(fullViewPath, viewContent, "utf-8");
+    for (const view of clapp.views) {
+      const fullViewPath = resolve(viewsDir, view.path);
+      const viewContent = loadView(clapp.id, view.path, view.md);
+      writeFileSync(fullViewPath, viewContent, "utf-8");
+    }
   }
 
   // Seed or merge _apps.json
