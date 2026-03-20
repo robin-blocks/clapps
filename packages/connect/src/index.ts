@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { resolve, dirname } from "node:path";
-import { homedir } from "node:os";
-import { mkdirSync, existsSync, statSync, chownSync } from "node:fs";
+import { homedir, networkInterfaces } from "node:os";
+import QRCode from "qrcode";
+import { mkdirSync, existsSync, statSync, chownSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { AgentClient } from "./agent-client.js";
@@ -15,6 +16,8 @@ import { ChatHandler } from "./chat-handler.js";
 import { SlackHandler } from "./slack-handler.js";
 import { OAuthHandler } from "./oauth-handler.js";
 import { initAccessToken, formatToken } from "./auth.js";
+import { loadClappHandlers } from "./clapp-loader.js";
+import type { ClappHandler } from "./clapp-handler.js";
 
 function parseArgs(args: string[]) {
   const opts: Record<string, string> = {};
@@ -52,10 +55,12 @@ async function main() {
   const viewsDir =
     opts["views-dir"] ??
     resolve(openclawHome, ".openclaw", "workspace", "ui", "views");
+  const templatesDir = resolve(openclawHome, ".openclaw", "workspace", "ui", "templates");
 
   // Ensure directories exist
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(viewsDir, { recursive: true });
+  mkdirSync(templatesDir, { recursive: true });
 
   // 1. Create in-memory state store
   const store = new StateStore();
@@ -151,11 +156,23 @@ async function main() {
   // 5. Initial sync: load all disk state into the store
   await agentHandler.syncToStore();
 
-  // 6. Resolve static SPA directory
+  // 6. Load clapp handlers
+  const clappsDir = resolve(openclawHome, ".openclaw", "clapps");
+  const clappHandlerCtx = {
+    stateDir,
+    setState: (clappId: string, state: unknown) => {
+      writeFileSync(resolve(stateDir, `${clappId}.json`), JSON.stringify(state, null, 2));
+      store.setState(clappId, state as Parameters<typeof store.setState>[1]);
+    },
+    checkAuthStatus: () => checkAuthStatus(stateDir, authPath),
+  };
+  let clappHandlers: ClappHandler[] = await loadClappHandlers(clappsDir, clappHandlerCtx);
+
+  // 7. Resolve static SPA directory
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const staticDir = resolve(__dirname, "..", "web-app");
 
-  // 7. Start HTTP + WebSocket server
+  // 8. Start HTTP + WebSocket server
   const server = startServer({
     port,
     store,
@@ -163,6 +180,8 @@ async function main() {
     accessToken,
     oauthHandler,
     openclawHome,
+    templatesDir,
+    stateDir,
     agentConnected: () => agentStarted,
     onConnect: () => {
       // Refresh settings state when a client connects (catches external changes)
@@ -173,6 +192,21 @@ async function main() {
       if (settingsHandler.handleIntent(intent)) return;
       if (chatHandler.handleIntent(intent)) return;
       if (slackHandler.handleIntent(intent)) return;
+
+      // Handle handler reload
+      if (intent.intent === "system.reloadHandlers") {
+        loadClappHandlers(clappsDir, clappHandlerCtx).then((handlers) => {
+          clappHandlers = handlers;
+          console.log(`[clapp-loader] Reloaded ${handlers.length} handler(s)`);
+        });
+        return;
+      }
+
+      // Try clapp handlers
+      for (const handler of clappHandlers) {
+        if (handler.handleIntent(intent)) return;
+      }
+
       // Forward to agent
       agentHandler.handleIntent(intent).catch((err) => {
         console.error(`[intent] ${(err as Error).message}`);
@@ -187,6 +221,7 @@ async function main() {
 
   console.log(`📁 State dir: ${stateDir}`);
   console.log(`📄 Views dir: ${viewsDir}`);
+  console.log(`📦 Templates dir: ${templatesDir}`);
   if (openclawHome !== homedir()) {
     console.log(`🏠 OpenClaw home: ${openclawHome}`);
   }
@@ -196,6 +231,16 @@ async function main() {
   } else {
     console.log(`⚠️  Auth disabled (--no-auth). Server is open to all.`);
   }
+
+  // Print QR code for mobile app setup
+  const localIP = getLocalIP();
+  const serverURL = `http://${localIP}:${port}`;
+  const qrPayload = JSON.stringify({ url: serverURL, token: accessToken ?? "" });
+  try {
+    const qr = await QRCode.toString(qrPayload, { type: "terminal", small: true });
+    console.log(`\n📱 Scan to connect the Clapps app:\n${qr}`);
+    console.log(`   Or visit ${serverURL}/connect in a browser\n`);
+  } catch { /* qr generation failed, not critical */ }
 
   // Graceful shutdown
   process.on("SIGINT", () => {
@@ -207,6 +252,18 @@ async function main() {
     chatAgentClient.stop();
     process.exit(0);
   });
+}
+
+function getLocalIP(): string {
+  const nets = networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] ?? []) {
+      if (net.family === "IPv4" && !net.internal) {
+        return net.address;
+      }
+    }
+  }
+  return "localhost";
 }
 
 main().catch((err) => {

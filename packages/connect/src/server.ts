@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile, readdir } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import { existsSync } from "node:fs";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -13,6 +13,7 @@ import {
   getLoginPageHtml,
 } from "./auth.js";
 import { OAuthHandler } from "./oauth-handler.js";
+import QRCode from "qrcode";
 
 export interface ServerOptions {
   port: number;
@@ -24,6 +25,8 @@ export interface ServerOptions {
   accessToken?: string | null; // null = no auth
   oauthHandler?: OAuthHandler;
   openclawHome?: string; // override homedir for openclaw paths
+  templatesDir?: string;
+  stateDir?: string;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -47,10 +50,10 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export function startServer(options: ServerOptions): { close: () => void } {
-  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken, oauthHandler, openclawHome } = options;
+  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken, oauthHandler, openclawHome, templatesDir, stateDir } = options;
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null, oauthHandler, openclawHome);
+    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null, oauthHandler, openclawHome, templatesDir, stateDir);
   });
 
   // Use noServer mode so we can authenticate WS upgrades
@@ -142,6 +145,8 @@ async function handleRequest(
   accessToken: string | null,
   oauthHandler?: OAuthHandler,
   openclawHome?: string,
+  templatesDir?: string,
+  stateDir?: string,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   const path = url.pathname;
@@ -166,7 +171,7 @@ async function handleRequest(
 
   // Auth-exempt routes
   if (path === "/api/health") {
-    return handleApi(req, res, path, store, onIntent, agentConnected, openclawHome);
+    return handleApi(req, res, path, store, onIntent, agentConnected, openclawHome, templatesDir, stateDir);
   }
 
   // Login routes
@@ -205,9 +210,14 @@ async function handleRequest(
     return handleOAuthCallback(req, res, oauthHandler);
   }
 
+  // Connect page (QR code for mobile app setup)
+  if (path === "/connect") {
+    return handleConnectPage(req, res, accessToken);
+  }
+
   // API routes
   if (path.startsWith("/api/")) {
-    return handleApi(req, res, path, store, onIntent, agentConnected, openclawHome);
+    return handleApi(req, res, path, store, onIntent, agentConnected, openclawHome, templatesDir, stateDir);
   }
 
   // Serve static SPA files
@@ -269,22 +279,70 @@ async function handleApi(
   onIntent: ServerOptions["onIntent"],
   agentConnected: (() => boolean) | undefined,
   openclawHome?: string,
+  templatesDir?: string,
+  stateDir?: string,
 ): Promise<void> {
-  // GET /api/apps
+  // GET /api/apps (merge agent-registered apps with provisioned template manifests)
   if (path === "/api/apps" && req.method === "GET") {
-    json(res, store.getApps());
+    const storeApps = store.getApps();
+    if (!templatesDir || !existsSync(templatesDir)) {
+      json(res, storeApps);
+      return;
+    }
+
+    try {
+      const dirs = await readdir(templatesDir, { withFileTypes: true });
+      const storeIds = new Set(storeApps.map((a) => a.id));
+      const allApps: unknown[] = [...storeApps];
+
+      for (const dir of dirs) {
+        if (!dir.isDirectory() || storeIds.has(dir.name)) continue;
+        const mPath = resolve(templatesDir, dir.name, "manifest.json");
+        if (!existsSync(mPath)) continue;
+        try {
+          const m = JSON.parse(await readFile(mPath, "utf-8"));
+          allApps.push({ id: m.id, name: m.name, icon: m.icon, color: m.color });
+        } catch { /* skip invalid manifests */ }
+      }
+
+      json(res, allApps);
+    } catch {
+      json(res, storeApps);
+    }
     return;
   }
 
-  // GET /api/state/:clappId
+  // GET /api/state/:clappId (injects _views from provisioned templates)
   const stateMatch = path.match(/^\/api\/state\/([^/]+)$/);
   if (stateMatch && req.method === "GET") {
-    const state = store.getState(stateMatch[1]);
+    const clappId = stateMatch[1];
+    const state = store.getState(clappId);
     if (!state) {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "not found" }));
       return;
     }
+
+    // Inject _views from templates if available
+    if (templatesDir) {
+      const viewsPath = resolve(templatesDir, clappId, "views");
+      if (existsSync(viewsPath)) {
+        try {
+          const viewFiles = await readdir(viewsPath);
+          const views: Record<string, unknown> = {};
+          for (const file of viewFiles) {
+            if (!file.endsWith(".json")) continue;
+            const content = await readFile(resolve(viewsPath, file), "utf-8");
+            views[file.replace(/\.json$/, "")] = JSON.parse(content);
+          }
+          if (Object.keys(views).length > 0) {
+            json(res, { ...(state as unknown as Record<string, unknown>), _views: views });
+            return;
+          }
+        } catch { /* fall through to normal response */ }
+      }
+    }
+
     json(res, state);
     return;
   }
@@ -300,6 +358,93 @@ async function handleApi(
     }
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end(content);
+    return;
+  }
+
+  // POST /api/templates (provision iOS template bundle)
+  if (path === "/api/templates" && req.method === "POST") {
+    if (!templatesDir || !stateDir) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "templates not configured" }));
+      return;
+    }
+
+    const body = await readBody(req);
+    try {
+      const data = JSON.parse(body);
+      const { id, name, version, icon, color, entryView, contract, views, initialState } = data;
+
+      if (!id || !version) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "id and version required" }));
+        return;
+      }
+
+      const templateDir = resolve(templatesDir, id);
+      const manifestPath = resolve(templateDir, "manifest.json");
+
+      // Check if same version already stored
+      if (existsSync(manifestPath)) {
+        try {
+          const existing = JSON.parse(await readFile(manifestPath, "utf-8"));
+          if (existing.version === version) {
+            json(res, { status: "unchanged" });
+            return;
+          }
+        } catch { /* proceed with overwrite */ }
+      }
+
+      const isNew = !existsSync(templateDir);
+
+      // Create directory structure
+      const viewsPath = resolve(templateDir, "views");
+      await mkdir(viewsPath, { recursive: true });
+
+      // Write manifest
+      await writeFile(manifestPath, JSON.stringify({ id, name, version, icon, color, entryView }, null, 2));
+
+      // Write contract
+      if (contract) {
+        await writeFile(resolve(templateDir, "contract.json"), JSON.stringify(contract, null, 2));
+      }
+
+      // Write views
+      if (views && typeof views === "object") {
+        for (const [viewName, viewData] of Object.entries(views)) {
+          await writeFile(resolve(viewsPath, `${viewName}.json`), JSON.stringify(viewData, null, 2));
+        }
+      }
+
+      // Write initial state if none exists on disk
+      if (initialState) {
+        const statePath = resolve(stateDir, `${id}.json`);
+        if (!existsSync(statePath)) {
+          await writeFile(statePath, JSON.stringify(initialState, null, 2));
+          store.setState(id, initialState);
+        }
+      }
+
+      // Notify agent on first provision
+      if (isNew) {
+        const installIntent: IntentMessage = {
+          id: crypto.randomUUID(),
+          agentId: "system",
+          clappId: id,
+          intent: "system.templateInstalled",
+          payload: {
+            name: name ?? id,
+            contractPath: resolve(templateDir, "contract.json"),
+          },
+          timestamp: new Date().toISOString(),
+        };
+        onIntent(installIntent);
+      }
+
+      json(res, { status: "provisioned" });
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "invalid JSON" }));
+    }
     return;
   }
 
@@ -448,6 +593,68 @@ async function handleOAuthCallback(
       error: error instanceof Error ? error.message : "OAuth callback failed",
     }));
   }
+}
+
+async function handleConnectPage(
+  req: IncomingMessage,
+  res: ServerResponse,
+  accessToken: string | null,
+): Promise<void> {
+  // Derive server URL from the request Host header
+  const host = req.headers.host ?? "localhost";
+  const protocol = req.headers["x-forwarded-proto"] ?? "http";
+  const serverURL = `${protocol}://${host}`;
+  const token = accessToken ?? "";
+
+  const qrPayload = JSON.stringify({ url: serverURL, token });
+  let qrDataURL: string;
+  try {
+    qrDataURL = await QRCode.toDataURL(qrPayload, { width: 280, margin: 2 });
+  } catch {
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.end("Failed to generate QR code");
+    return;
+  }
+
+  const tokenDisplay = accessToken
+    ? `<div class="field"><div class="label">Access Code</div><code>${accessToken}</code></div>`
+    : `<div class="field"><div class="label">Auth</div><code>disabled</code></div>`;
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connect Mobile App</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f5f5f7; color: #1d1d1f; }
+    .card { background: white; border-radius: 20px; padding: 40px; text-align: center; box-shadow: 0 4px 24px rgba(0,0,0,0.08); max-width: 380px; width: 90%; }
+    h1 { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+    .subtitle { color: #86868b; font-size: 15px; margin-bottom: 24px; }
+    .qr { margin: 0 auto 24px; }
+    .qr img { border-radius: 12px; }
+    .divider { display: flex; align-items: center; gap: 12px; margin: 24px 0; color: #86868b; font-size: 13px; }
+    .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: #e5e5e7; }
+    .field { margin-bottom: 12px; }
+    .label { font-size: 11px; color: #86868b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    code { display: block; background: #f5f5f7; padding: 10px 14px; border-radius: 8px; font-size: 14px; font-family: "SF Mono", Menlo, monospace; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Connect Mobile App</h1>
+    <p class="subtitle">Scan with the Clapps app to connect</p>
+    <div class="qr"><img src="${qrDataURL}" width="280" height="280" alt="QR Code" /></div>
+    <div class="divider">or enter manually</div>
+    <div class="field"><div class="label">Server URL</div><code>${serverURL}</code></div>
+    ${tokenDisplay}
+  </div>
+</body>
+</html>`;
+
+  res.writeHead(200, { "Content-Type": "text/html" });
+  res.end(html);
 }
 
 async function serveStatic(

@@ -5,7 +5,10 @@
   "bin": {
     "clapps-connect": "./dist/index.js"
   },
-  "files": ["dist", "web-app"],
+  "files": [
+    "dist",
+    "web-app"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -14,10 +17,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@clapps/core": "workspace:*",
+    "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.5.13"
   }
 }
