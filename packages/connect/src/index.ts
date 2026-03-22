@@ -232,14 +232,27 @@ async function main() {
     console.log(`⚠️  Auth disabled (--no-auth). Server is open to all.`);
   }
 
-  // Print QR code for mobile app setup
+  // Generate QR code for mobile app setup
   const localIP = getLocalIP();
   const serverURL = `http://${localIP}:${port}`;
   const qrPayload = JSON.stringify({ url: serverURL, token: accessToken ?? "" });
   try {
+    // Print terminal QR
     const qr = await QRCode.toString(qrPayload, { type: "terminal", small: true });
     console.log(`\n📱 Scan to connect the Clapps app:\n${qr}`);
     console.log(`   Or visit ${serverURL}/connect in a browser\n`);
+
+    // Save QR code as PNG + connection info for the agent to send
+    const uiDir = resolve(openclawHome, ".openclaw", "workspace", "ui");
+    const qrPngPath = resolve(uiDir, "connect-qr.png");
+    await QRCode.toFile(qrPngPath, qrPayload, { width: 400, margin: 2 });
+    const { writeFile: writeFileAsync } = await import("node:fs/promises");
+    await writeFileAsync(resolve(uiDir, "connect-info.json"), JSON.stringify({
+      url: serverURL,
+      token: accessToken ? formatToken(accessToken) : null,
+      connectPage: `${serverURL}/connect`,
+      qrCodePath: qrPngPath,
+    }, null, 2));
   } catch { /* qr generation failed, not critical */ }
 
   // Graceful shutdown

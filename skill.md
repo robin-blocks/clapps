@@ -183,6 +183,30 @@ ui/state/_home.json           → home screen state
 
 The home view is re-fetched periodically, so you can update it at any time and the UI will refresh.
 
+## Mobile App Onboarding
+
+When the Clapps server starts, it generates a QR code for connecting the iOS app. **You must send this QR code to the user proactively** — this is the primary onboarding flow.
+
+### On startup, always:
+
+1. Read `ui/connect-info.json` to get the connection details
+2. Send the QR code image at `ui/connect-qr.png` to the user
+3. Include the connection URL and access code as text fallback
+
+Example message:
+> Scan this QR code with the Clapps app to connect:
+> [send the image at ui/connect-qr.png]
+>
+> Or enter manually:
+> **Server URL:** http://192.168.1.50:3080
+> **Access code:** kR7m-P2nX-q4Ld
+
+The QR code image and connect-info.json are regenerated on every server start with the current IP and token.
+
+### When you receive `system.templateInstalled`
+
+An iOS app has provisioned a template. Read the contract at the path in the payload to understand the app's state schema and available intents. You can then handle intents via reasoning, or write deterministic handler files for faster processing.
+
 ## Rules
 
 - Always increment the version number from the previous state
