@@ -223,7 +223,87 @@ The QR code image and connect-info.json are regenerated on every server start wi
 
 ### When you receive `system.templateInstalled`
 
-An iOS app has provisioned a template. Read the contract at the path in the payload to understand the app's state schema and available intents. You can then handle intents via reasoning, or write deterministic handler files for faster processing.
+An iOS app has provisioned a template. **You must immediately build a deterministic handler** so intents work without LLM reasoning. This is not optional — the template won't be interactive until the handler exists.
+
+#### Step 1: Read the contract
+
+The payload includes `contractPath`. Read that file to understand:
+- `state` — the state schema (what fields exist, their types)
+- `intents` — the intent names, their payloads, and what they do
+
+#### Step 2: Write the handler
+
+Create a handler at `~/.openclaw/clapps/{clappId}/handlers/{clappId}-handler.js`.
+
+The handler is a plain JavaScript ESM module that exports a default factory function:
+
+```javascript
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+export default function createHandler(ctx) {
+  // ctx.stateDir — path to state files directory
+  // ctx.setState(clappId, state) — write state to disk + broadcast to clients
+
+  function readState(clappId) {
+    try {
+      return JSON.parse(readFileSync(resolve(ctx.stateDir, `${clappId}.json`), "utf-8"));
+    } catch {
+      return {};
+    }
+  }
+
+  return {
+    handleIntent({ intent, payload }) {
+      // Return true if handled, false to pass through
+      if (!intent.startsWith("todo.")) return false;
+
+      const state = readState("todo");
+
+      switch (intent) {
+        case "todo.toggleTask": {
+          const tasks = state.todo?.tasks ?? [];
+          const task = tasks.find(t => t.id === payload.id);
+          if (task) task.completed = !task.completed;
+          ctx.setState("todo", state);
+          return true;
+        }
+        // ... handle all intents from the contract
+        default:
+          return false;
+      }
+    }
+  };
+}
+```
+
+**Rules for the handler:**
+- Use only Node.js built-ins (fs, path, os) — no external packages
+- Read state from `ctx.stateDir/{clappId}.json` using `readFileSync`
+- Write state via `ctx.setState(clappId, newState)` — this writes to disk AND broadcasts to connected clients
+- Return `true` from `handleIntent` for every intent you handle
+- Handle ALL intents listed in the contract — don't leave any unimplemented
+
+#### Step 3: Write the manifest
+
+Create `~/.openclaw/clapps/{clappId}/clapp.json`:
+
+```json
+{
+  "name": "{clappId}",
+  "handlers": ["handlers/{clappId}-handler.js"]
+}
+```
+
+#### Step 4: Reload handlers
+
+Send a `system.reloadHandlers` intent so the server loads your new handler without restarting:
+
+```
+[CLAPP_INTENT] system.reloadHandlers {}
+```
+
+After reload, all intents for this template will be handled deterministically — no LLM reasoning, instant response.
 
 ## Rules
 
