@@ -33,8 +33,8 @@ export function initAccessToken(opts: {
     // File doesn't exist or unreadable
   }
 
-  // Generate new token: 6 random bytes → 12-char hex (no dashes in alphabet)
-  const token = randomBytes(6).toString("hex");
+  // Generate new token: 16 random bytes → 32-char hex (128 bits of entropy)
+  const token = randomBytes(16).toString("hex");
   persistToken(token);
   return token;
 }

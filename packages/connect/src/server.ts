@@ -56,13 +56,52 @@ function jsonError(res: ServerResponse, status: number, error: string): void {
   res.end(JSON.stringify({ error }));
 }
 
+// --- Rate limiting for write endpoints ---
+
+const apiRateMap = new Map<string, { count: number; resetAt: number }>();
+const API_RATE_LIMIT = 60; // requests per window
+const API_RATE_WINDOW = 60_000; // 1 minute
+
+function checkApiRateLimit(req: IncomingMessage): boolean {
+  const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
+    ?? req.socket.remoteAddress ?? "unknown";
+  const now = Date.now();
+  const entry = apiRateMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    apiRateMap.set(ip, { count: 1, resetAt: now + API_RATE_WINDOW });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= API_RATE_LIMIT;
+}
+
+const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_SIZE) {
+        req.destroy();
+        reject(new Error("Payload too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => resolve(Buffer.concat(chunks).toString()));
     req.on("error", reject);
   });
+}
+
+/** Validate that a template/clapp ID is safe for use in file paths. */
+function isValidId(id: string): boolean {
+  return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id) && !id.includes("..");
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 // --- Server entrypoint ---
@@ -192,12 +231,21 @@ async function handleRequest(
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   const path = url.pathname;
 
-  // CORS
-  if (ctx.accessToken != null) {
-    const origin = req.headers.origin;
-    if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-  } else {
+  // CORS — only allow same-host origins (different ports are OK for local dev)
+  const origin = req.headers.origin;
+  if (origin) {
+    try {
+      const reqHost = req.headers.host?.split(":")[0] ?? "";
+      const originHost = new URL(origin).hostname;
+      if (originHost === reqHost || originHost === "localhost" || originHost === "127.0.0.1") {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        if (ctx.accessToken != null) {
+          res.setHeader("Access-Control-Allow-Credentials", "true");
+        }
+      }
+    } catch { /* invalid origin, skip CORS headers */ }
+  } else if (ctx.accessToken == null) {
+    // No auth mode: allow all origins (development only)
     res.setHeader("Access-Control-Allow-Origin", "*");
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -283,6 +331,13 @@ async function routeApi(
   const viewMatch = path.match(/^\/api\/views\/([^/]+)$/);
   if (viewMatch && req.method === "GET") {
     return handleView(res, ctx, viewMatch[1]);
+  }
+
+  // Rate-limit write endpoints
+  if (req.method === "POST" && !checkApiRateLimit(req)) {
+    res.writeHead(429, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "too many requests" }));
+    return;
   }
 
   if (path === "/api/templates" && req.method === "POST") {
@@ -392,7 +447,16 @@ async function handleTemplates(req: IncomingMessage, res: ServerResponse, ctx: R
       return;
     }
 
+    if (!isValidId(id)) {
+      jsonError(res, 400, "invalid template id");
+      return;
+    }
+
     const templateDir = resolve(ctx.templatesDir, id);
+    if (!templateDir.startsWith(resolve(ctx.templatesDir))) {
+      jsonError(res, 400, "invalid template id");
+      return;
+    }
     const manifestPath = resolve(templateDir, "manifest.json");
 
     // Check if same version already stored
@@ -568,7 +632,7 @@ async function handleOAuthInit(
     json(res, oauthHandler.initOAuth(provider, data.customName as string | undefined));
   } catch (error) {
     console.error("[oauth] Init failed:", error);
-    jsonError(res, 500, error instanceof Error ? error.message : "OAuth init failed");
+    jsonError(res, 500, "OAuth init failed");
   }
 }
 
@@ -602,7 +666,7 @@ async function handleOAuthCallback(
     json(res, await oauthHandler.handleCallback(code, state));
   } catch (error) {
     console.error("[oauth] Callback failed:", error);
-    jsonError(res, 500, error instanceof Error ? error.message : "OAuth callback failed");
+    jsonError(res, 500, "OAuth callback failed");
   }
 }
 
@@ -627,7 +691,7 @@ async function handleConnectPage(
   }
 
   const tokenDisplay = accessToken
-    ? `<div class="field"><div class="label">Access Code</div><code>${accessToken}</code></div>`
+    ? `<div class="field"><div class="label">Access Code</div><code>${escapeHtml(accessToken)}</code></div>`
     : `<div class="field"><div class="label">Auth</div><code>disabled</code></div>`;
 
   const html = `<!DOCTYPE html>
