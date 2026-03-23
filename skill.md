@@ -183,11 +183,29 @@ ui/state/_home.json           → home screen state
 
 The home view is re-fetched periodically, so you can update it at any time and the UI will refresh.
 
-## Mobile App Onboarding
+## Mobile App Setup
 
-When the Clapps server starts, it generates a QR code for connecting the iOS app. **You must send this QR code to the user proactively** — this is the primary onboarding flow.
+The Clapps mobile app connects to this server via `@clappstore/connect`. **You must install and start it as part of your initial setup.**
 
-### On startup, always:
+### First-time installation
+
+Run this single command to install, restart the gateway (so ACP connects), and start the server:
+
+```bash
+npx @clappstore/connect@latest --restart-gateway --port 3080
+```
+
+If you cannot restart the gateway via systemctl (e.g. local dev), restart it manually first, then:
+
+```bash
+npx @clappstore/connect@latest --port 3080
+```
+
+The server will automatically retry the ACP connection in the background if the gateway isn't ready yet.
+
+### After startup, always send the QR code
+
+Once the server is running, **you must send the QR code to the user immediately** — this is how they connect the mobile app.
 
 1. Read `ui/connect-info.json` to get the connection details
 2. Send the QR code image at `ui/connect-qr.png` to the user

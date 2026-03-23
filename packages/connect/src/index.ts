@@ -25,8 +25,8 @@ function parseArgs(args: string[]) {
   const flags: Record<string, boolean> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "--no-auth") {
-      flags["no-auth"] = true;
+    if (arg === "--no-auth" || arg === "--restart-gateway") {
+      flags[arg.slice(2)] = true;
     } else if (arg.startsWith("--") && i + 1 < args.length) {
       opts[arg.slice(2)] = args[i + 1];
       i++;
@@ -45,14 +45,55 @@ function createAgentClient(session: string, agentToken?: string, label = "acp"):
   });
 }
 
-async function startAgentClients(clients: AgentClient[]): Promise<boolean> {
+async function startAgentClients(
+  clients: AgentClient[],
+  onConnected?: () => void,
+): Promise<boolean> {
   try {
     await Promise.all(clients.map((c) => c.start()));
     return true;
   } catch (err) {
     console.error(`⚠️  ACP failed to start: ${err instanceof Error ? err.message : err}`);
-    console.error("   Intent processing will not work until ACP is available.");
+    console.error("   Retrying in background — intent processing will start when gateway is available.");
+    retryAgentClients(clients, onConnected);
     return false;
+  }
+}
+
+async function retryAgentClients(
+  clients: AgentClient[],
+  onConnected?: () => void,
+): Promise<void> {
+  const MAX_RETRIES = 24; // 2 minutes total
+  const RETRY_INTERVAL = 5_000;
+
+  for (let i = 1; i <= MAX_RETRIES; i++) {
+    await new Promise((r) => setTimeout(r, RETRY_INTERVAL));
+    try {
+      await Promise.all(clients.map((c) => c.start()));
+      console.log("🔌 ACP connected (retry successful)");
+      onConnected?.();
+      return;
+    } catch {
+      if (i % 6 === 0) {
+        console.log(`   ACP retry ${i}/${MAX_RETRIES} — still waiting for gateway...`);
+      }
+    }
+  }
+  console.error("⚠️  ACP connection failed after 2 minutes. Restart the gateway and then restart clapps-connect.");
+}
+
+function restartGateway(): void {
+  console.log("🔄 Restarting OpenClaw gateway...");
+  const result = spawnSync("systemctl", ["restart", "openclaw"], {
+    encoding: "utf-8",
+    timeout: 15_000,
+  });
+  if (result.status === 0) {
+    console.log("   Gateway restarted. Waiting for it to become ready...");
+    spawnSync("sleep", ["3"]);
+  } else {
+    console.warn("   systemctl restart failed — gateway may need manual restart.");
   }
 }
 
@@ -170,11 +211,19 @@ async function main() {
   });
   settingsHandler.writeSettingsState();
 
-  // ACP agent sessions
+  // Restart gateway if requested (ensures ACP can connect)
+  if (flags["restart-gateway"]) {
+    restartGateway();
+  }
+
+  // ACP agent sessions (retries in background if gateway isn't ready)
   const agentClient = createAgentClient(session, agentToken, "acp");
   const chatAgentClient = createAgentClient("agent:main:clapps-chat", agentToken, "acp:chat");
   const titleAgentClient = createAgentClient("agent:main:clapps-title", agentToken, "acp:title");
-  const agentStarted = await startAgentClients([agentClient, chatAgentClient, titleAgentClient]);
+  let agentStarted = await startAgentClients(
+    [agentClient, chatAgentClient, titleAgentClient],
+    () => { agentStarted = true; },
+  );
 
   // Handlers
   const chatHandler = new ChatHandler({ stateDir, store, agentClient: chatAgentClient, titleAgentClient });
