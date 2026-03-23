@@ -15,19 +15,57 @@ import {
 import { OAuthHandler } from "./oauth-handler.js";
 import QRCode from "qrcode";
 
+// --- Types ---
+
 export interface ServerOptions {
   port: number;
   store: StateStore;
   onIntent: (intent: IntentMessage, context?: ClientContext) => void;
-  staticDir?: string; // path to built SPA files
+  staticDir?: string;
   agentConnected?: () => boolean;
-  onConnect?: () => void; // called when a client connects (for state refresh)
-  accessToken?: string | null; // null = no auth
+  onConnect?: () => void;
+  accessToken?: string | null;
   oauthHandler?: OAuthHandler;
-  openclawHome?: string; // override homedir for openclaw paths
+  openclawHome?: string;
   templatesDir?: string;
   stateDir?: string;
 }
+
+/** Shared context passed to all route handlers (replaces positional params). */
+interface RequestContext {
+  store: StateStore;
+  onIntent: ServerOptions["onIntent"];
+  agentConnected?: () => boolean;
+  accessToken: string | null;
+  oauthHandler?: OAuthHandler;
+  openclawHome?: string;
+  templatesDir?: string;
+  stateDir?: string;
+  staticDir?: string;
+}
+
+// --- Response helpers ---
+
+function json(res: ServerResponse, data: unknown): void {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(data));
+}
+
+function jsonError(res: ServerResponse, status: number, error: string): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error }));
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    req.on("error", reject);
+  });
+}
+
+// --- Server entrypoint ---
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -50,17 +88,28 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 export function startServer(options: ServerOptions): { close: () => void } {
-  const { port, store, onIntent, staticDir, agentConnected, onConnect, accessToken, oauthHandler, openclawHome, templatesDir, stateDir } = options;
+  const { port, store, onIntent, onConnect, accessToken, oauthHandler } = options;
+
+  const ctx: RequestContext = {
+    store,
+    onIntent,
+    agentConnected: options.agentConnected,
+    accessToken: accessToken ?? null,
+    oauthHandler,
+    openclawHome: options.openclawHome,
+    templatesDir: options.templatesDir,
+    stateDir: options.stateDir,
+    staticDir: options.staticDir,
+  };
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, store, onIntent, staticDir, agentConnected, accessToken ?? null, oauthHandler, openclawHome, templatesDir, stateDir);
+    handleRequest(req, res, ctx);
   });
 
-  // Use noServer mode so we can authenticate WS upgrades
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (req, socket, head) => {
-    if (!authenticateWsUpgrade(req, accessToken ?? null)) {
+    if (!authenticateWsUpgrade(req, ctx.accessToken)) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
@@ -72,8 +121,6 @@ export function startServer(options: ServerOptions): { close: () => void } {
 
   wss.on("connection", (ws: WebSocket) => {
     const client = store.addClient(ws);
-
-    // Notify that a client connected (for state refresh)
     onConnect?.();
 
     ws.on("message", (raw) => {
@@ -135,25 +182,18 @@ function handleWsMessage(
   }
 }
 
+// --- Request router ---
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  store: StateStore,
-  onIntent: ServerOptions["onIntent"],
-  staticDir: string | undefined,
-  agentConnected: (() => boolean) | undefined,
-  accessToken: string | null,
-  oauthHandler?: OAuthHandler,
-  openclawHome?: string,
-  templatesDir?: string,
-  stateDir?: string,
+  ctx: RequestContext,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
   const path = url.pathname;
 
-  // CORS headers
-  if (accessToken != null) {
-    // With auth: reflect origin and allow credentials
+  // CORS
+  if (ctx.accessToken != null) {
     const origin = req.headers.origin;
     if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -171,10 +211,8 @@ async function handleRequest(
 
   // Auth-exempt routes
   if (path === "/api/health") {
-    return handleApi(req, res, path, store, onIntent, agentConnected, openclawHome, templatesDir, stateDir);
+    return handleHealth(res, ctx);
   }
-
-  // Login routes
   if (path === "/auth/login") {
     if (req.method === "GET") {
       res.writeHead(200, { "Content-Type": "text/html" });
@@ -182,59 +220,299 @@ async function handleRequest(
       return;
     }
     if (req.method === "POST") {
-      return handleLogin(req, res, accessToken);
+      return handleLogin(req, res, ctx.accessToken);
     }
   }
 
-  // Auth check for everything else
-  if (accessToken != null) {
-    const { authenticated } = authenticateRequest(req, accessToken);
+  // Auth check
+  if (ctx.accessToken != null) {
+    const { authenticated } = authenticateRequest(req, ctx.accessToken);
     if (!authenticated) {
       if (path.startsWith("/api/")) {
-        res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "unauthorized" }));
+        jsonError(res, 401, "unauthorized");
         return;
       }
-      // Browser routes → show login page
       res.writeHead(401, { "Content-Type": "text/html" });
       res.end(getLoginPageHtml());
       return;
     }
   }
 
-  // OAuth routes (authenticated)
-  if (path === "/api/oauth/init" && oauthHandler) {
-    return handleOAuthInit(req, res, oauthHandler);
+  // Authenticated routes
+  if (path === "/api/oauth/init" && ctx.oauthHandler) {
+    return handleOAuthInit(req, res, ctx.oauthHandler);
   }
-  if (path === "/api/oauth/callback" && oauthHandler) {
-    return handleOAuthCallback(req, res, oauthHandler);
+  if (path === "/api/oauth/callback" && ctx.oauthHandler) {
+    return handleOAuthCallback(req, res, ctx.oauthHandler);
   }
-
-  // Connect page (QR code for mobile app setup)
   if (path === "/connect") {
-    return handleConnectPage(req, res, accessToken);
+    return handleConnectPage(req, res, ctx.accessToken);
   }
 
   // API routes
   if (path.startsWith("/api/")) {
-    return handleApi(req, res, path, store, onIntent, agentConnected, openclawHome, templatesDir, stateDir);
+    return routeApi(req, res, path, ctx);
   }
 
-  // Serve static SPA files
-  if (staticDir) {
-    return serveStatic(req, res, path, staticDir);
+  // Static SPA
+  if (ctx.staticDir) {
+    return serveStatic(res, path, ctx.staticDir);
   }
 
   res.writeHead(404, { "Content-Type": "text/plain" });
   res.end("Not Found");
 }
 
+// --- API router (dispatches to individual handlers) ---
+
+async function routeApi(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  ctx: RequestContext,
+): Promise<void> {
+  if (path === "/api/apps" && req.method === "GET") {
+    return handleApps(res, ctx);
+  }
+
+  const stateMatch = path.match(/^\/api\/state\/([^/]+)$/);
+  if (stateMatch && req.method === "GET") {
+    return handleState(res, ctx, stateMatch[1]);
+  }
+
+  const viewMatch = path.match(/^\/api\/views\/([^/]+)$/);
+  if (viewMatch && req.method === "GET") {
+    return handleView(res, ctx, viewMatch[1]);
+  }
+
+  if (path === "/api/templates" && req.method === "POST") {
+    return handleTemplates(req, res, ctx);
+  }
+
+  if (path === "/api/intent" && req.method === "POST") {
+    return handleIntentRoute(req, res, ctx);
+  }
+
+  if (path === "/api/health" && req.method === "GET") {
+    return handleHealth(res, ctx);
+  }
+
+  const assetMatch = path.match(/^\/api\/chat-assets\/([^/]+)\/([^/]+)$/);
+  if (assetMatch && req.method === "GET") {
+    return handleChatAsset(res, ctx, decodeURIComponent(assetMatch[1]), decodeURIComponent(assetMatch[2]));
+  }
+
+  jsonError(res, 404, "not found");
+}
+
+// --- Individual API route handlers ---
+
+async function handleApps(res: ServerResponse, ctx: RequestContext): Promise<void> {
+  const storeApps = ctx.store.getApps();
+  if (!ctx.templatesDir || !existsSync(ctx.templatesDir)) {
+    json(res, storeApps);
+    return;
+  }
+
+  try {
+    const dirs = await readdir(ctx.templatesDir, { withFileTypes: true });
+    const storeIds = new Set(storeApps.map((a) => a.id));
+    const allApps: unknown[] = [...storeApps];
+
+    for (const dir of dirs) {
+      if (!dir.isDirectory() || storeIds.has(dir.name)) continue;
+      const mPath = resolve(ctx.templatesDir, dir.name, "manifest.json");
+      if (!existsSync(mPath)) continue;
+      try {
+        const m = JSON.parse(await readFile(mPath, "utf-8"));
+        allApps.push({ id: m.id, name: m.name, icon: m.icon, color: m.color });
+      } catch { /* skip invalid manifests */ }
+    }
+
+    json(res, allApps);
+  } catch {
+    json(res, storeApps);
+  }
+}
+
+async function handleState(res: ServerResponse, ctx: RequestContext, clappId: string): Promise<void> {
+  const state = ctx.store.getState(clappId);
+  if (!state) {
+    jsonError(res, 404, "not found");
+    return;
+  }
+
+  // Inject _views from templates if available
+  if (ctx.templatesDir) {
+    const viewsPath = resolve(ctx.templatesDir, clappId, "views");
+    if (existsSync(viewsPath)) {
+      try {
+        const viewFiles = await readdir(viewsPath);
+        const views: Record<string, unknown> = {};
+        for (const file of viewFiles) {
+          if (!file.endsWith(".json")) continue;
+          const content = await readFile(resolve(viewsPath, file), "utf-8");
+          views[file.replace(/\.json$/, "")] = JSON.parse(content);
+        }
+        if (Object.keys(views).length > 0) {
+          json(res, { ...(state as unknown as Record<string, unknown>), _views: views });
+          return;
+        }
+      } catch { /* fall through */ }
+    }
+  }
+
+  json(res, state);
+}
+
+function handleView(res: ServerResponse, ctx: RequestContext, viewId: string): void {
+  const content = ctx.store.getView(viewId);
+  if (!content) {
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("not found");
+    return;
+  }
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end(content);
+}
+
+async function handleTemplates(req: IncomingMessage, res: ServerResponse, ctx: RequestContext): Promise<void> {
+  if (!ctx.templatesDir || !ctx.stateDir) {
+    jsonError(res, 500, "templates not configured");
+    return;
+  }
+
+  const body = await readBody(req);
+  try {
+    const data = JSON.parse(body);
+    const { id, name, version, icon, color, entryView, contract, views, initialState } = data;
+
+    if (!id || !version) {
+      jsonError(res, 400, "id and version required");
+      return;
+    }
+
+    const templateDir = resolve(ctx.templatesDir, id);
+    const manifestPath = resolve(templateDir, "manifest.json");
+
+    // Check if same version already stored
+    if (existsSync(manifestPath)) {
+      try {
+        const existing = JSON.parse(await readFile(manifestPath, "utf-8"));
+        if (existing.version === version) {
+          json(res, { status: "unchanged" });
+          return;
+        }
+      } catch { /* proceed with overwrite */ }
+    }
+
+    const isNew = !existsSync(templateDir);
+
+    // Create directory structure and write files
+    const viewsPath = resolve(templateDir, "views");
+    await mkdir(viewsPath, { recursive: true });
+    await writeFile(manifestPath, JSON.stringify({ id, name, version, icon, color, entryView }, null, 2));
+
+    if (contract) {
+      await writeFile(resolve(templateDir, "contract.json"), JSON.stringify(contract, null, 2));
+    }
+
+    if (views && typeof views === "object") {
+      for (const [viewName, viewData] of Object.entries(views)) {
+        await writeFile(resolve(viewsPath, `${viewName}.json`), JSON.stringify(viewData, null, 2));
+      }
+    }
+
+    // Write initial state if none exists on disk
+    if (initialState) {
+      const statePath = resolve(ctx.stateDir, `${id}.json`);
+      if (!existsSync(statePath)) {
+        await writeFile(statePath, JSON.stringify(initialState, null, 2));
+        ctx.store.setState(id, initialState);
+      }
+    }
+
+    // Notify agent on first provision
+    if (isNew) {
+      ctx.onIntent({
+        id: crypto.randomUUID(),
+        agentId: "system",
+        clappId: id,
+        intent: "system.templateInstalled",
+        payload: { name: name ?? id, contractPath: resolve(templateDir, "contract.json") },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    json(res, { status: "provisioned" });
+  } catch {
+    jsonError(res, 400, "invalid JSON");
+  }
+}
+
+async function handleIntentRoute(req: IncomingMessage, res: ServerResponse, ctx: RequestContext): Promise<void> {
+  const body = await readBody(req);
+  try {
+    const data = JSON.parse(body);
+    ctx.onIntent({
+      id: data.id ?? crypto.randomUUID(),
+      agentId: data.agentId ?? "local",
+      clappId: data.clappId ?? "",
+      intent: data.intent,
+      payload: data.payload ?? {},
+      timestamp: data.timestamp ?? new Date().toISOString(),
+    });
+    json(res, { ok: true });
+  } catch {
+    jsonError(res, 400, "invalid JSON");
+  }
+}
+
+function handleHealth(res: ServerResponse, ctx: RequestContext): void {
+  json(res, {
+    status: "ok",
+    agent: ctx.agentConnected ? ctx.agentConnected() : false,
+  });
+}
+
+async function handleChatAsset(
+  res: ServerResponse,
+  ctx: RequestContext,
+  sessionKey: string,
+  fileName: string,
+): Promise<void> {
+  if (!/^session-\d+$/.test(sessionKey) || fileName.includes("..") || fileName.includes("/")) {
+    jsonError(res, 400, "invalid asset path");
+    return;
+  }
+
+  const { homedir } = await import("node:os");
+  const home = ctx.openclawHome ?? homedir();
+  const assetPath = resolve(home, ".openclaw", "workspace", "chat-sessions", "assets", sessionKey, fileName);
+
+  if (!existsSync(assetPath)) {
+    jsonError(res, 404, "asset not found");
+    return;
+  }
+
+  try {
+    const content = await readFile(assetPath);
+    const ext = extname(assetPath);
+    const mime = MIME_TYPES[ext] ?? "application/octet-stream";
+    res.writeHead(200, { "Content-Type": mime, "Cache-Control": "private, max-age=31536000, immutable" });
+    res.end(content);
+  } catch {
+    jsonError(res, 500, "failed to read asset");
+  }
+}
+
+// --- Non-API route handlers ---
+
 async function handleLogin(
   req: IncomingMessage,
   res: ServerResponse,
   accessToken: string | null,
 ): Promise<void> {
-  // If no auth, just redirect
   if (accessToken === null) {
     res.writeHead(302, { Location: "/" });
     res.end();
@@ -256,8 +534,6 @@ async function handleLogin(
   const params = new URLSearchParams(body);
   const password = params.get("password")?.trim() ?? "";
   const remember = params.get("remember") === "1";
-
-  // Normalize: strip dashes for comparison (user may paste formatted code)
   const normalized = password.replace(/-/g, "");
 
   if (normalized !== accessToken) {
@@ -271,261 +547,13 @@ async function handleLogin(
   res.end();
 }
 
-async function handleApi(
-  req: IncomingMessage,
-  res: ServerResponse,
-  path: string,
-  store: StateStore,
-  onIntent: ServerOptions["onIntent"],
-  agentConnected: (() => boolean) | undefined,
-  openclawHome?: string,
-  templatesDir?: string,
-  stateDir?: string,
-): Promise<void> {
-  // GET /api/apps (merge agent-registered apps with provisioned template manifests)
-  if (path === "/api/apps" && req.method === "GET") {
-    const storeApps = store.getApps();
-    if (!templatesDir || !existsSync(templatesDir)) {
-      json(res, storeApps);
-      return;
-    }
-
-    try {
-      const dirs = await readdir(templatesDir, { withFileTypes: true });
-      const storeIds = new Set(storeApps.map((a) => a.id));
-      const allApps: unknown[] = [...storeApps];
-
-      for (const dir of dirs) {
-        if (!dir.isDirectory() || storeIds.has(dir.name)) continue;
-        const mPath = resolve(templatesDir, dir.name, "manifest.json");
-        if (!existsSync(mPath)) continue;
-        try {
-          const m = JSON.parse(await readFile(mPath, "utf-8"));
-          allApps.push({ id: m.id, name: m.name, icon: m.icon, color: m.color });
-        } catch { /* skip invalid manifests */ }
-      }
-
-      json(res, allApps);
-    } catch {
-      json(res, storeApps);
-    }
-    return;
-  }
-
-  // GET /api/state/:clappId (injects _views from provisioned templates)
-  const stateMatch = path.match(/^\/api\/state\/([^/]+)$/);
-  if (stateMatch && req.method === "GET") {
-    const clappId = stateMatch[1];
-    const state = store.getState(clappId);
-    if (!state) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "not found" }));
-      return;
-    }
-
-    // Inject _views from templates if available
-    if (templatesDir) {
-      const viewsPath = resolve(templatesDir, clappId, "views");
-      if (existsSync(viewsPath)) {
-        try {
-          const viewFiles = await readdir(viewsPath);
-          const views: Record<string, unknown> = {};
-          for (const file of viewFiles) {
-            if (!file.endsWith(".json")) continue;
-            const content = await readFile(resolve(viewsPath, file), "utf-8");
-            views[file.replace(/\.json$/, "")] = JSON.parse(content);
-          }
-          if (Object.keys(views).length > 0) {
-            json(res, { ...(state as unknown as Record<string, unknown>), _views: views });
-            return;
-          }
-        } catch { /* fall through to normal response */ }
-      }
-    }
-
-    json(res, state);
-    return;
-  }
-
-  // GET /api/views/:viewId
-  const viewMatch = path.match(/^\/api\/views\/([^/]+)$/);
-  if (viewMatch && req.method === "GET") {
-    const content = store.getView(viewMatch[1]);
-    if (!content) {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      res.end("not found");
-      return;
-    }
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end(content);
-    return;
-  }
-
-  // POST /api/templates (provision iOS template bundle)
-  if (path === "/api/templates" && req.method === "POST") {
-    if (!templatesDir || !stateDir) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "templates not configured" }));
-      return;
-    }
-
-    const body = await readBody(req);
-    try {
-      const data = JSON.parse(body);
-      const { id, name, version, icon, color, entryView, contract, views, initialState } = data;
-
-      if (!id || !version) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "id and version required" }));
-        return;
-      }
-
-      const templateDir = resolve(templatesDir, id);
-      const manifestPath = resolve(templateDir, "manifest.json");
-
-      // Check if same version already stored
-      if (existsSync(manifestPath)) {
-        try {
-          const existing = JSON.parse(await readFile(manifestPath, "utf-8"));
-          if (existing.version === version) {
-            json(res, { status: "unchanged" });
-            return;
-          }
-        } catch { /* proceed with overwrite */ }
-      }
-
-      const isNew = !existsSync(templateDir);
-
-      // Create directory structure
-      const viewsPath = resolve(templateDir, "views");
-      await mkdir(viewsPath, { recursive: true });
-
-      // Write manifest
-      await writeFile(manifestPath, JSON.stringify({ id, name, version, icon, color, entryView }, null, 2));
-
-      // Write contract
-      if (contract) {
-        await writeFile(resolve(templateDir, "contract.json"), JSON.stringify(contract, null, 2));
-      }
-
-      // Write views
-      if (views && typeof views === "object") {
-        for (const [viewName, viewData] of Object.entries(views)) {
-          await writeFile(resolve(viewsPath, `${viewName}.json`), JSON.stringify(viewData, null, 2));
-        }
-      }
-
-      // Write initial state if none exists on disk
-      if (initialState) {
-        const statePath = resolve(stateDir, `${id}.json`);
-        if (!existsSync(statePath)) {
-          await writeFile(statePath, JSON.stringify(initialState, null, 2));
-          store.setState(id, initialState);
-        }
-      }
-
-      // Notify agent on first provision
-      if (isNew) {
-        const installIntent: IntentMessage = {
-          id: crypto.randomUUID(),
-          agentId: "system",
-          clappId: id,
-          intent: "system.templateInstalled",
-          payload: {
-            name: name ?? id,
-            contractPath: resolve(templateDir, "contract.json"),
-          },
-          timestamp: new Date().toISOString(),
-        };
-        onIntent(installIntent);
-      }
-
-      json(res, { status: "provisioned" });
-    } catch {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "invalid JSON" }));
-    }
-    return;
-  }
-
-  // POST /api/intent
-  if (path === "/api/intent" && req.method === "POST") {
-    const body = await readBody(req);
-    try {
-      const data = JSON.parse(body);
-      const intent: IntentMessage = {
-        id: data.id ?? crypto.randomUUID(),
-        agentId: data.agentId ?? "local",
-        clappId: data.clappId ?? "",
-        intent: data.intent,
-        payload: data.payload ?? {},
-        timestamp: data.timestamp ?? new Date().toISOString(),
-      };
-      onIntent(intent);
-      json(res, { ok: true });
-    } catch {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "invalid JSON" }));
-    }
-    return;
-  }
-
-  // GET /api/health
-  if (path === "/api/health" && req.method === "GET") {
-    json(res, {
-      status: "ok",
-      agent: agentConnected ? agentConnected() : false,
-    });
-    return;
-  }
-
-  // GET /api/chat-assets/:sessionKey/:fileName
-  const assetMatch = path.match(/^\/api\/chat-assets\/([^/]+)\/([^/]+)$/);
-  if (assetMatch && req.method === "GET") {
-    const sessionKey = decodeURIComponent(assetMatch[1]);
-    const fileName = decodeURIComponent(assetMatch[2]);
-
-    if (!/^session-\d+$/.test(sessionKey) || fileName.includes("..") || fileName.includes("/")) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "invalid asset path" }));
-      return;
-    }
-
-    const { homedir } = await import("node:os");
-    const home = openclawHome ?? homedir();
-    const assetPath = resolve(home, ".openclaw", "workspace", "chat-sessions", "assets", sessionKey, fileName);
-    if (!existsSync(assetPath)) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "asset not found" }));
-      return;
-    }
-
-    try {
-      const content = await readFile(assetPath);
-      const ext = extname(assetPath);
-      const mime = MIME_TYPES[ext] ?? "application/octet-stream";
-      res.writeHead(200, { "Content-Type": mime, "Cache-Control": "private, max-age=31536000, immutable" });
-      res.end(content);
-      return;
-    } catch {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "failed to read asset" }));
-      return;
-    }
-  }
-
-  res.writeHead(404, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ error: "not found" }));
-}
-
 async function handleOAuthInit(
   req: IncomingMessage,
   res: ServerResponse,
   oauthHandler: OAuthHandler,
 ): Promise<void> {
   if (req.method !== "POST") {
-    res.writeHead(405, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "method not allowed" }));
+    jsonError(res, 405, "method not allowed");
     return;
   }
 
@@ -533,22 +561,14 @@ async function handleOAuthInit(
     const body = await readBody(req);
     const data = JSON.parse(body);
     const provider = data.provider as string | undefined;
-    const customName = data.customName as string | undefined;
-
     if (!provider) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "provider is required" }));
+      jsonError(res, 400, "provider is required");
       return;
     }
-
-    const result = oauthHandler.initOAuth(provider, customName);
-    json(res, result);
+    json(res, oauthHandler.initOAuth(provider, data.customName as string | undefined));
   } catch (error) {
     console.error("[oauth] Init failed:", error);
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ 
-      error: error instanceof Error ? error.message : "OAuth init failed" 
-    }));
+    jsonError(res, 500, error instanceof Error ? error.message : "OAuth init failed");
   }
 }
 
@@ -558,8 +578,7 @@ async function handleOAuthCallback(
   oauthHandler: OAuthHandler,
 ): Promise<void> {
   if (req.method !== "POST") {
-    res.writeHead(405, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "method not allowed" }));
+    jsonError(res, 405, "method not allowed");
     return;
   }
 
@@ -567,31 +586,23 @@ async function handleOAuthCallback(
     const body = await readBody(req);
     const data = JSON.parse(body);
     const callbackUrl = data.callbackUrl as string | undefined;
-
     if (!callbackUrl) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "callbackUrl is required" }));
+      jsonError(res, 400, "callbackUrl is required");
       return;
     }
 
     const parsed = new URL(callbackUrl);
     const code = parsed.searchParams.get("code");
     const state = parsed.searchParams.get("state");
-
     if (!code || !state) {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "URL must contain code and state parameters" }));
+      jsonError(res, 400, "URL must contain code and state parameters");
       return;
     }
 
-    const result = await oauthHandler.handleCallback(code, state);
-    json(res, result);
+    json(res, await oauthHandler.handleCallback(code, state));
   } catch (error) {
     console.error("[oauth] Callback failed:", error);
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      error: error instanceof Error ? error.message : "OAuth callback failed",
-    }));
+    jsonError(res, 500, error instanceof Error ? error.message : "OAuth callback failed");
   }
 }
 
@@ -600,7 +611,6 @@ async function handleConnectPage(
   res: ServerResponse,
   accessToken: string | null,
 ): Promise<void> {
-  // Derive server URL from the request Host header
   const host = req.headers.host ?? "localhost";
   const protocol = req.headers["x-forwarded-proto"] ?? "http";
   const serverURL = `${protocol}://${host}`;
@@ -657,16 +667,9 @@ async function handleConnectPage(
   res.end(html);
 }
 
-async function serveStatic(
-  _req: IncomingMessage,
-  res: ServerResponse,
-  path: string,
-  staticDir: string,
-): Promise<void> {
-  // Normalize path
+async function serveStatic(res: ServerResponse, path: string, staticDir: string): Promise<void> {
   let filePath = path === "/" ? "/index.html" : path;
 
-  // Security: prevent directory traversal
   const resolved = resolve(staticDir, filePath.slice(1));
   if (!resolved.startsWith(resolve(staticDir))) {
     res.writeHead(403);
@@ -674,7 +677,6 @@ async function serveStatic(
     return;
   }
 
-  // Try the exact file, then fall back to index.html (SPA routing)
   let target = resolved;
   if (!existsSync(target)) {
     target = resolve(staticDir, "index.html");
@@ -690,18 +692,4 @@ async function serveStatic(
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("Not Found");
   }
-}
-
-function json(res: ServerResponse, data: unknown): void {
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify(data));
-}
-
-function readBody(req: IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString()));
-    req.on("error", reject);
-  });
 }
